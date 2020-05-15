@@ -1,0 +1,252 @@
+﻿#pragma kernel March
+#pragma kernel MarchEdge
+#include "/Includes/MarchTables.compute"
+
+static const int numThreads = 8;
+
+struct Triangle {
+    float3 vertexC;
+    float3 vertexB;
+    float3 vertexA;
+};
+
+RWStructuredBuffer<uint> points;
+RWStructuredBuffer<uint> edge;
+AppendStructuredBuffer<Triangle> triangles;
+
+uint Width;
+uint Height;
+float3 Origin;
+
+bool ZEdgeGenerated;
+bool XEdgeGenerated;
+bool CornerEdgeGenerated;
+
+uint valueFromCoord(uint x, uint y, uint z)
+{
+    // extracting [x%4] byte
+    return (points[z * Width * (Width/4) + y * (Width/4) + x/4] >> (8*(x%4))) & 0x000000ff;
+}
+
+uint edgeValueFromCoord(uint x, uint y, uint z)
+{
+    // edge cases
+    if (z == Width)
+    {
+        if (x == Width)
+        {            
+            return (edge[Width*Height/2 + y/4] >> (8*(y%4))) & 0x000000ff; // corner
+        }
+        return (edge[y * (Width/4) + x/4] >> (8*(x%4))) & 0x000000ff; // z edge
+    }
+    if (x == Width)
+        return (edge[Width*Height/4 + y * (Width/4) + z/4] >> (8*(z%4))) & 0x000000ff; // x edge
+
+    // normal cases
+    return (points[z * Width * (Width/4) + y * (Width/4) + x/4] >> (8*(x%4))) & 0x000000ff;
+}
+
+[numthreads(numThreads,numThreads,numThreads)]
+void March (uint3 id : SV_DispatchThreadID)
+{   
+    // error check
+    if (id.x > Width-1 || id.y >= Height-1 || id.z > Width-1) 
+        return;
+
+    uint cubeCorners[8];
+    // 8 corners of the current cube
+    if (id.x < Width-1 && id.z < Width-1)
+    {        
+        cubeCorners[0] = valueFromCoord(id.x    , id.y    , id.z    );
+        cubeCorners[1] = valueFromCoord(id.x + 1, id.y    , id.z    );
+        cubeCorners[2] = valueFromCoord(id.x    , id.y + 1, id.z    );
+        cubeCorners[3] = valueFromCoord(id.x + 1, id.y + 1, id.z    );
+        cubeCorners[4] = valueFromCoord(id.x    , id.y    , id.z + 1);
+        cubeCorners[5] = valueFromCoord(id.x + 1, id.y    , id.z + 1);
+        cubeCorners[6] = valueFromCoord(id.x    , id.y + 1, id.z + 1);
+        cubeCorners[7] = valueFromCoord(id.x + 1, id.y + 1, id.z + 1);
+    }
+    else
+    {
+        if (id.x == Width-1 && !XEdgeGenerated) return;
+        if (id.z == Width-1 && !ZEdgeGenerated) return;
+        if (id.x == Width-1 && id.z == Width-1 && !CornerEdgeGenerated) return;
+        cubeCorners[0] = edgeValueFromCoord(id.x    , id.y    , id.z    );
+        cubeCorners[1] = edgeValueFromCoord(id.x + 1, id.y    , id.z    );
+        cubeCorners[2] = edgeValueFromCoord(id.x    , id.y + 1, id.z    );
+        cubeCorners[3] = edgeValueFromCoord(id.x + 1, id.y + 1, id.z    );
+        cubeCorners[4] = edgeValueFromCoord(id.x    , id.y    , id.z + 1);
+        cubeCorners[5] = edgeValueFromCoord(id.x + 1, id.y    , id.z + 1);
+        cubeCorners[6] = edgeValueFromCoord(id.x    , id.y + 1, id.z + 1);
+        cubeCorners[7] = edgeValueFromCoord(id.x + 1, id.y + 1, id.z + 1);
+    }
+
+    // Calculate unique index for each cube configuration.
+    // There are 256 possible values
+    // A value of 0 means cube is entirely inside surface; 255 entirely outside.
+    // The value is used to look up the edge table, which indicates which edges of the cube are cut by the isosurface.
+    int cubeIndex = 0;
+    if (cubeCorners[0] > 0) cubeIndex |= 1;
+    if (cubeCorners[1] > 0) cubeIndex |= 2; 
+    if (cubeCorners[5] > 0) cubeIndex |= 4; 
+    if (cubeCorners[4] > 0) cubeIndex |= 8;
+    if (cubeCorners[2] > 0) cubeIndex |= 16;
+    if (cubeCorners[3] > 0) cubeIndex |= 32; 
+    if (cubeCorners[7] > 0) cubeIndex |= 64; 
+    if (cubeCorners[6] > 0) cubeIndex |= 128;
+
+
+    
+    // Create triangles for current cube configuration
+    for (int i = 0; triangulation[cubeIndex][i] != -1; i +=3) {
+        float3 val[3];
+        // Get indices of corner points A and B for each of the three edges
+        // of the cube that need to be joined to form the triangle.
+        for (int j = 0; j < 3; j++)
+        {
+            int edge = triangulation[cubeIndex][i+j];
+            int ai = cornerIndexAFromEdge[edge];                      
+            float3 vert = {0,0,0};            
+            float3 d = {0,0,0};
+            //float inc = cubeCorners[ai] + 1.0)/512.0;
+            int axis;
+
+            if ((edge == 1) || (edge == 5) || (edge == 9)  || (edge == 10)) vert.x = 1;
+            if ((edge == 4) || (edge == 5) || (edge == 6)  || (edge == 7)) vert.y = 1;
+            if ((edge == 2) || (edge == 6) || (edge == 10) || (edge == 11)) vert.z = 1;
+            
+            // if ((edge == 0) || (edge == 2) || (edge == 4)  || (edge == 6)) { d.x = 1; axis = 1; }
+            // if ((edge == 8) || (edge == 9) || (edge == 10) || (edge == 11)) { d.y = 1; axis = 2; }
+            // if ((edge == 1) || (edge == 3) || (edge == 5)  || (edge == 7)) { d.z = 1; axis = 4; }
+            if (edge & 8) { d.y = 1; axis = 2; }
+            else if (edge & 1) { d.z = 1; axis = 4; }
+            else { d.x = 1; axis = 1; }
+            
+            if (cubeCorners[ai] == 0) ai = cornerIndexBFromEdge[edge];
+               
+            if ((ai & axis) > 0) 
+            {
+                vert += d * (1.0 - (cubeCorners[ai] + 1.0)/512.0); 
+            }
+            else 
+            {
+                vert += d * ((cubeCorners[ai] + 1.0)/512.0);
+            }      
+
+            val[j] = Origin + (float3)id + vert;
+        }
+
+        Triangle tri;
+        tri.vertexA = val[2];
+        tri.vertexB = val[1];
+        tri.vertexC = val[0];
+
+        triangles.Append(tri);
+    }
+}
+
+
+[numthreads(numThreads,numThreads,1)]
+void MarchEdge (uint3 id : SV_DispatchThreadID)
+{   
+    if (id.x >= Width*2 - 1 || id.y >= Height-1 || id.z >= 1) return;
+
+    uint3 index;
+    if (id.x <= Width-2)
+    {
+        if (!ZEdgeGenerated) return;
+        index.x = id.x;
+        index.y = id.y;
+        index.z = Width - 1;
+    } else
+    if (id.x <= Width*2-3)
+    {
+        if ((id.x == Width*2-1 && !CornerEdgeGenerated) || !XEdgeGenerated) return;
+        index.x = Width - 1;
+        index.y = id.y;
+        index.z = id.x - (Width-1);
+    } else
+    {
+        if (!CornerEdgeGenerated) return;
+        index.x = Width - 1;
+        index.y = id.y;
+        index.z = Width - 1;
+    }
+
+    // 8 corners of the current cube
+    uint cubeCorners[8] =
+    {    
+        edgeValueFromCoord(index.x    , index.y    , index.z    ),
+        edgeValueFromCoord(index.x + 1, index.y    , index.z    ),
+        edgeValueFromCoord(index.x    , index.y + 1, index.z    ),
+        edgeValueFromCoord(index.x + 1, index.y + 1, index.z    ),
+        edgeValueFromCoord(index.x    , index.y    , index.z + 1),
+        edgeValueFromCoord(index.x + 1, index.y    , index.z + 1),
+        edgeValueFromCoord(index.x    , index.y + 1, index.z + 1),
+        edgeValueFromCoord(index.x + 1, index.y + 1, index.z + 1)
+    };
+
+    // Calculate unique index for each cube configuration.
+    // There are 256 possible values
+    // A value of 0 means cube is entirely inside surface; 255 entirely outside.
+    // The value is used to look up the edge table, which indicates which edges of the cube are cut by the isosurface.
+    int cubeIndex = 0;
+    if (cubeCorners[0] > 0) cubeIndex |= 1;
+    if (cubeCorners[1] > 0) cubeIndex |= 2; 
+    if (cubeCorners[5] > 0) cubeIndex |= 4; 
+    if (cubeCorners[4] > 0) cubeIndex |= 8;
+    if (cubeCorners[2] > 0) cubeIndex |= 16;
+    if (cubeCorners[3] > 0) cubeIndex |= 32; 
+    if (cubeCorners[7] > 0) cubeIndex |= 64; 
+    if (cubeCorners[6] > 0) cubeIndex |= 128;
+
+
+    
+    // Create triangles for current cube configuration
+    for (int i = 0; triangulation[cubeIndex][i] != -1; i +=3) {
+        float3 val[3];
+        // Get indices of corner points A and B for each of the three edges
+        // of the cube that need to be joined to form the triangle.
+        for (int j = 0; j < 3; j++)
+        {
+            int edge = triangulation[cubeIndex][i+j];
+            int ai = cornerIndexAFromEdge[edge];                      
+            float3 vert = {0,0,0};            
+            float3 d = {0,0,0};
+            //float inc = cubeCorners[ai] + 1.0)/512.0;
+            int axis;
+
+            if ((edge == 1) || (edge == 5) || (edge == 9)  || (edge == 10)) vert.x = 1;
+            if ((edge == 4) || (edge == 5) || (edge == 6)  || (edge == 7)) vert.y = 1;
+            if ((edge == 2) || (edge == 6) || (edge == 10) || (edge == 11)) vert.z = 1;
+            
+            // if ((edge == 0) || (edge == 2) || (edge == 4)  || (edge == 6)) { d.x = 1; axis = 1; }
+            // if ((edge == 8) || (edge == 9) || (edge == 10) || (edge == 11)) { d.y = 1; axis = 2; }
+            // if ((edge == 1) || (edge == 3) || (edge == 5)  || (edge == 7)) { d.z = 1; axis = 4; }
+            if (edge & 8) { d.y = 1; axis = 2; }
+            else if (edge & 1) { d.z = 1; axis = 4; }
+            else { d.x = 1; axis = 1; }
+            
+            if (cubeCorners[ai] == 0) ai = cornerIndexBFromEdge[edge];
+               
+            if ((ai & axis) > 0) 
+            {
+                vert += d * (1.0 - (cubeCorners[ai] + 1.0)/512.0); 
+            }
+            else 
+            {
+                vert += d * ((cubeCorners[ai] + 1.0)/512.0);
+            }      
+
+            val[j] = Origin + (float3)index + vert;
+
+        }
+
+        Triangle tri;
+        tri.vertexA = val[2];
+        tri.vertexB = val[1];
+        tri.vertexC = val[0];
+
+        triangles.Append(tri);
+    }
+}
