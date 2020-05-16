@@ -433,9 +433,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 1679324570}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ca2925054ff69324bbc5de4187a5680c, type: 3}
+  m_Script: {fileID: 11500000, guid: 60009abde5a9b4f4db3ef55089c75fcc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  noiseScale: 32
+  noiseFrequency: 0.025
   mapShader: {fileID: 7200000, guid: c3b411a33f90d6948a4f5a53bf103502, type: 3}
 --- !u!4 &1679324572
 Transform:
@@ -483,7 +485,7 @@ MonoBehaviour:
   mapGenerator: {fileID: 1679324571}
   numChunks: {x: 1, y: 1, z: 1}
   viewer: {fileID: 963194228}
-  viewDistance: 6
+  viewDistance: 10
   cullView: 1
   autoUpdateInEditor: 1
   autoUpdateInGame: 1

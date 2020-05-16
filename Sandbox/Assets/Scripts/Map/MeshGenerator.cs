@@ -53,6 +53,8 @@ public class MeshGenerator : MonoBehaviour {
     ComputeBuffer edgeBuffer;
     bool[] toGenerate = {false,false,false};
 
+    Vector3Int viewerCoord = new Vector3Int();
+
     bool settingsUpdated;
 
     void Awake () {
@@ -110,78 +112,84 @@ public class MeshGenerator : MonoBehaviour {
         }
         CreateChunkHolder ();
        
-        Vector3 ps = viewer.position / Chunk.size.width;
-        Vector3Int viewerCoord = new Vector3Int (Mathf.RoundToInt (ps.x), Mathf.RoundToInt (ps.y), Mathf.RoundToInt (ps.z));
-
-        // Go through all existing chunks and flag for recyling if outside of max view dst
-        for (int i = chunks.Count - 1; i >= 0; i--) {
-            Chunk chunk = chunks[i];
-            float chunkDistance = (chunk.coord - viewerCoord).magnitude;
-            
-            if (chunkDistance > viewDistance) {                
-                recycleableChunks.Enqueue (chunk);
-                if (cullView){
-                    existingChunks.Remove (chunk.coord);
-                    chunk.mesh.Clear();
-                    chunks.RemoveAt (i); 
-                }                
+        Vector3Int ps = new Vector3Int();
+        ps.x = Mathf.RoundToInt(viewer.position.x / Chunk.size.width);
+        ps.y = 0;
+        ps.z = Mathf.RoundToInt(viewer.position.z / Chunk.size.width);
+        
+        if (viewerCoord != ps){
+            viewerCoord = ps;
+            // Go through all existing chunks and flag for recyling if outside of max view dst
+            for (int i = chunks.Count - 1; i >= 0; i--) {
+                Chunk chunk = chunks[i];
+                float chunkDistance = (chunk.coord - viewerCoord).magnitude;
+                
+                if (chunkDistance > viewDistance) {                
+                    recycleableChunks.Enqueue (chunk);
+                    if (cullView){
+                        existingChunks.Remove (chunk.coord);
+                        chunk.mesh.Clear();
+                        chunks.RemoveAt (i); 
+                    }                
+                }
             }
         }
 
-        for (int x = viewDistance; x >= -viewDistance; x--) {
-            //for (int y = -viewDistance; y <= viewDistance; y++) {
-            for (int z = viewDistance; z >= -viewDistance; z--) {
-                Vector3Int coord = new Vector3Int (x + viewerCoord.x, 0, z + viewerCoord.z);
+            for (int x = viewDistance; x >= -viewDistance; x--) {
+                //for (int y = -viewDistance; y <= viewDistance; y++) {
+                for (int z = viewDistance; z >= -viewDistance; z--) {
+                    Vector3Int coord = new Vector3Int (x + viewerCoord.x, 0, z + viewerCoord.z);
 
-                if (existingChunks.ContainsKey (coord)) {
-                    continue;
-                }
+                    if (existingChunks.ContainsKey (coord)) {
+                        continue;
+                    }
 
-                // Chunk is within view distance and should be created (if it doesn't already exist)
-                if (x*x + z*z <= viewDistance*viewDistance) {
+                    // Chunk is within view distance and should be created (if it doesn't already exist)
+                    if (x*x + z*z <= viewDistance*viewDistance) {
 
-                    Bounds bounds = new Bounds (OriginFromCoord (coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
-                    if (IsVisibleFrom (bounds, Camera.main)) {
-                        if (cullView){
-                            if (recycleableChunks.Count > 0) {
-                                Chunk chunk = recycleableChunks.Dequeue ();
-                                chunk.SetUp(mat, generateColliders, coord);                                
-                                existingChunks.Add (coord, chunk);
-                                chunks.Add (chunk);
-                                UpdateChunkMesh (chunk);
-                            } else {
-                                Chunk chunk = CreateChunk (coord);                               
-                                existingChunks.Add (coord, chunk);
-                                chunks.Add (chunk);
-                                UpdateChunkMesh (chunk);
-                            }
-                        }
-                        else {
-                            bool isRecycled = false;
-                            for (int i = 0; i < recycleableChunks.Count; i++){
-                                Chunk chunk = recycleableChunks.Dequeue ();
-                                if ((chunk.coord - viewerCoord).magnitude > viewDistance){
-                                    existingChunks.Remove (chunk.coord);
+                        Bounds bounds = new Bounds (OriginFromCoord (coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
+                        if (IsVisibleFrom (bounds, Camera.main)) {
+                            if (cullView){
+                                if (recycleableChunks.Count > 0) {
+                                    Chunk chunk = recycleableChunks.Dequeue ();
                                     chunk.SetUp(mat, generateColliders, coord);                                
                                     existingChunks.Add (coord, chunk);
+                                    chunks.Add (chunk);
                                     UpdateChunkMesh (chunk);
-                                    isRecycled = true;
-                                    break;
+                                } else {
+                                    Chunk chunk = CreateChunk (coord);                               
+                                    existingChunks.Add (coord, chunk);
+                                    chunks.Add (chunk);
+                                    UpdateChunkMesh (chunk);
                                 }
                             }
-                            if (!isRecycled){
-                                Chunk chunk = CreateChunk (coord);                               
-                                existingChunks.Add (coord, chunk);
-                                chunks.Add (chunk);
-                                UpdateChunkMesh (chunk);
-                            }
-                        }  
+                            else {
+                                bool isRecycled = false;
+                                for (int i = 0; i < recycleableChunks.Count; i++){
+                                    Chunk chunk = recycleableChunks.Dequeue ();
+                                    if ((chunk.coord - viewerCoord).magnitude > viewDistance){
+                                        existingChunks.Remove (chunk.coord);
+                                        chunk.SetUp(mat, generateColliders, coord);                                
+                                        existingChunks.Add (coord, chunk);
+                                        UpdateChunkMesh (chunk);
+                                        isRecycled = true;
+                                        break;
+                                    }
+                                }
+                                if (!isRecycled){
+                                    Chunk chunk = CreateChunk (coord);                               
+                                    existingChunks.Add (coord, chunk);
+                                    chunks.Add (chunk);
+                                    UpdateChunkMesh (chunk);
+                                }
+                            }  
+                        }
                     }
-                }
 
+                }
+                // }
             }
-            // }
-        }
+        
     }
 
     public bool IsVisibleFrom (Bounds bounds, Camera camera) {
@@ -195,7 +203,7 @@ public class MeshGenerator : MonoBehaviour {
         // Current chunk mesh kernel
         int kernelHandle = marchShader.FindKernel("March");
 
-        mapGenerator.Generate(pointsBuffer); // generate chunk points
+        mapGenerator.Generate(pointsBuffer, OriginFromCoord(chunk.coord)); // generate chunk points
         pointsBuffer.GetData(chunk.blocks);  // copy them to blocks data
         GenerateEdgeBuffer(chunk); // generate edge points
 
@@ -213,6 +221,7 @@ public class MeshGenerator : MonoBehaviour {
             if (!edgeChunk.generated[0])
             {
                 GenerateEdgeBuffer(edgeChunk);
+                pointsBuffer.SetData(edgeChunk.blocks);
                 DispatchMarchShader(kernelHandle, edgeChunk.coord, true);
                 CopyMeshData (edgeChunk);
             }
@@ -222,6 +231,7 @@ public class MeshGenerator : MonoBehaviour {
             if (!edgeChunk.generated[1])
             {
                 GenerateEdgeBuffer(edgeChunk);
+                pointsBuffer.SetData(edgeChunk.blocks);
                 DispatchMarchShader(kernelHandle, edgeChunk.coord, true);
                 CopyMeshData (edgeChunk);
             }
@@ -231,6 +241,7 @@ public class MeshGenerator : MonoBehaviour {
             if (!edgeChunk.generated[2])
             {
                 GenerateEdgeBuffer(edgeChunk);
+                pointsBuffer.SetData(edgeChunk.blocks);
                 DispatchMarchShader(kernelHandle, edgeChunk.coord, true);
                 CopyMeshData (edgeChunk);
             }
@@ -402,7 +413,7 @@ public class MeshGenerator : MonoBehaviour {
 
     Vector3 OriginFromCoord (Vector3Int coord) {
 
-        return new Vector3 (coord.x, coord.y, coord.z) * Chunk.size.width;
+        return new Vector3 (coord.x * Chunk.size.width, coord.y * Chunk.size.height, coord.z * Chunk.size.width);
     }
 
     void CreateChunkHolder () {

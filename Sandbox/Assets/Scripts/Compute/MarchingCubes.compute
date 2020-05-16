@@ -126,11 +126,11 @@ void March (uint3 id : SV_DispatchThreadID)
                
             if ((ai & axis) > 0) 
             {
-                vert += d * (1.0 - (cubeCorners[ai] + 1.0)/512.0); 
+                vert += d * (1.0 - (cubeCorners[ai])/255.0); 
             }
             else 
             {
-                vert += d * ((cubeCorners[ai] + 1.0)/512.0);
+                vert += d * ((cubeCorners[ai])/255.0);
             }      
 
             val[j] = Origin + (float3)id + vert;
