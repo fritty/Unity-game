@@ -169,8 +169,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   cam: {fileID: 963194225}
-  speed: 0
-  position: {x: 0, y: 0, z: 0}
+  Speed: 30
+  RotationSpeed: 50
 --- !u!136 &167431450
 CapsuleCollider:
   m_ObjectHideFlags: 0
@@ -483,7 +483,8 @@ MonoBehaviour:
   mapGenerator: {fileID: 1679324571}
   numChunks: {x: 1, y: 1, z: 1}
   viewer: {fileID: 963194228}
-  viewDistance: 10
+  viewDistance: 6
+  cullView: 1
   autoUpdateInEditor: 1
   autoUpdateInGame: 1
   marchShader: {fileID: 7200000, guid: eb5e3a4d60e5d6447a6d64ad0ca565db, type: 3}

@@ -21,12 +21,12 @@ public abstract class MapGenerator : MonoBehaviour {
         // Points buffer is populated inside shader with pos (xyz).
         // Set paramaters
         mapShader.SetBuffer (kernelHandle, "points", pointsBuffer);
-        mapShader.SetInt ("Width", Chunk.size.x);
-        mapShader.SetFloat ("Height", Chunk.size.y);
+        mapShader.SetInt ("Width", Chunk.size.width);
+        mapShader.SetFloat ("Height", Chunk.size.height);
         
 
         // Dispatch shader
-        mapShader.Dispatch (kernelHandle, Chunk.size.x / (threadsPerAxis*4), Chunk.size.y / (threadsPerAxis), Chunk.size.z);
+        mapShader.Dispatch (kernelHandle, Chunk.size.width / (threadsPerAxis*4), Chunk.size.height / (threadsPerAxis), Chunk.size.width);
 
         if (buffersToRelease != null) {
             foreach (var b in buffersToRelease) {

@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public class Chunk : MonoBehaviour {
-
-    static public Vector3Int size = new Vector3Int(32, 32, 32);
-
+    public struct size
+    {
+        static public int width = 32;
+        static public int height = 32;
+    }
+    
     [HideInInspector]
     public Vector3Int coord;
     [HideInInspector]
@@ -30,8 +33,10 @@ public class Chunk : MonoBehaviour {
     }
 
     // Add components/get references in case lost (references can be lost when working in the editor)
-    public void SetUp (Material mat, bool generateCollider) {
+    public void SetUp (Material mat, bool generateCollider, Vector3Int coord) {
         this.generateCollider = generateCollider;
+        this.coord = coord;
+        this.name = $"Chunk ({coord.x}, {coord.y}, {coord.z})";
 
         meshFilter = GetComponent<MeshFilter> ();
         meshRenderer = GetComponent<MeshRenderer> ();
@@ -43,6 +48,7 @@ public class Chunk : MonoBehaviour {
 
         if (meshRenderer == null) {
             meshRenderer = gameObject.AddComponent<MeshRenderer> ();
+            meshRenderer.material = mat;
         }
 
         if (meshCollider == null && generateCollider) {
@@ -53,7 +59,7 @@ public class Chunk : MonoBehaviour {
         }
 
         if (blocks == null) {
-            blocks = new byte[Chunk.size.z,Chunk.size.y,Chunk.size.x];
+            blocks = new byte[Chunk.size.width,Chunk.size.height,Chunk.size.width];
         }
 
         generated[0] = generated[1] = generated[2] = false;
@@ -64,6 +70,9 @@ public class Chunk : MonoBehaviour {
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             meshFilter.sharedMesh = mesh;
         }
+        else {
+            mesh.Clear();
+        }
 
         if (generateCollider) {
             if (meshCollider.sharedMesh == null) {
@@ -72,8 +81,6 @@ public class Chunk : MonoBehaviour {
             // force update
             meshCollider.enabled = false;
             meshCollider.enabled = true;
-        }
-
-        meshRenderer.material = mat;
+        }        
     }
 }
