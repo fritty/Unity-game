@@ -16,28 +16,75 @@ public class MapGenerator : MonoBehaviour {
     }
 
     public void Generate (ComputeBuffer pointsBuffer, Vector3 origin) {
-         CpuGen(pointsBuffer, origin);
+         //FlatGen(pointsBuffer, origin);
+         //GradGen(pointsBuffer, origin);
+         PerlinGen(pointsBuffer, origin);
     }
 
-    void CpuGen (ComputeBuffer pointsBuffer, Vector3 origin){
+    void FlatGen (ComputeBuffer pointsBuffer, Vector3 origin){
+        byte[,,] blocks = new byte[Chunk.size.width, Chunk.size.height, Chunk.size.width];
+        Vector3 tilt = new Vector3((origin.x/32 + 120)/256,0,0);
+
+         for (byte x = 0; x < Chunk.size.width; x++){
+            for (byte z = 0; z < Chunk.size.width; z++){                
+                for (byte y = 0; y < Chunk.size.height; y++){
+                    float val = tilt.x*x + tilt.z*z;
+                    if (y == Mathf.Floor(val)){
+                        blocks[z,y,x] = (byte)Mathf.RoundToInt(255 * (val - Mathf.Floor(val)));
+                        continue;
+                    }
+                    if (y > val)                   
+                        blocks[z,y,x] = 0;
+                    else
+                        blocks[z,y,x] = 255;
+                }
+            }
+         }
+         pointsBuffer.SetData(blocks);
+    }
+
+    void GradGen (ComputeBuffer pointsBuffer, Vector3 origin) {
+        byte[,,] blocks = new byte[Chunk.size.width, Chunk.size.height, Chunk.size.width];
+
+         for (byte x = 0; x < Chunk.size.width; x++){
+            for (byte z = 0; z < Chunk.size.width; z++){                
+                for (byte y = 0; y < Chunk.size.height; y++){ 
+                    float xAbs = origin.x + x;
+                    float zAbs = origin.z + z;
+                    float val = (noiseScale-2) * Mathf.Pow(Mathf.Sin(xAbs*noiseFrequency),2);
+                    if (y == Mathf.Floor(val)){
+                        blocks[z,y,x] = (byte)Mathf.RoundToInt(255 * (val - Mathf.Floor(val)));
+                        continue;
+                    }
+                    if (y > val)//Mathf.Sin((xAbs*xAbs + zAbs*zAbs)*noiseFrequency))                   
+                        blocks[z,y,x] = 0;
+                    else
+                        blocks[z,y,x] = 255;
+                }
+            }
+         }
+         pointsBuffer.SetData(blocks);        
+    }
+
+    void PerlinGen (ComputeBuffer pointsBuffer, Vector3 origin){
         byte[,,] blocks = new byte[Chunk.size.width, Chunk.size.height, Chunk.size.width];
         //float[,] noiseMap = new float[Chunk.size.width, Chunk.size.width];
         float noiseMap;
 
-        for (int i = 0; i < Chunk.size.width; i++){
-            for (int j = 0; j < Chunk.size.width; j++){
-                noiseMap = noiseScale * Mathf.PerlinNoise((i + origin.x) * noiseFrequency + 500, (j + origin.z) * noiseFrequency + 500);
-                for (int k = 0; k < Chunk.size.height; k++){
-                    if (k == Mathf.FloorToInt(noiseMap)){
-                        blocks[j,k,i] = (byte)Mathf.RoundToInt(255 * (noiseMap - Mathf.Floor(noiseMap)));
+        for (byte x = 0; x < Chunk.size.width; x++){
+            for (byte z = 0; z < Chunk.size.width; z++){
+                noiseMap = noiseScale * Mathf.PerlinNoise((x + origin.x) * noiseFrequency + 500, (z + origin.z) * noiseFrequency + 500);
+                for (byte y = 0; y < Chunk.size.height; y++){
+                    if (y == Mathf.Floor(noiseMap)){
+                        blocks[z,y,x] = (byte)Mathf.RoundToInt(255 * (noiseMap - Mathf.Floor(noiseMap)));
                         continue;
                     }
 
-                    if (k > noiseMap){
-                        blocks[j,k,i] = 0;                        
+                    if (y > noiseMap){
+                        blocks[z,y,x] = 0;                        
                     }
                     else {
-                        blocks[j,k,i] = 255;                        
+                        blocks[z,y,x] = 255;                        
                     }
                 }            
             }              

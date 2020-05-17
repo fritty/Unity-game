@@ -285,6 +285,11 @@ public class MeshGenerator : MonoBehaviour {
 
             chunk.mesh.CombineMeshes(combine, true, false, false);
             chunk.mesh.RecalculateNormals ();
+            // chunk.mesh.OptimizeReorderVertexBuffer();
+            // chunk.mesh.OptimizeIndexBuffers();
+            //chunk.mesh.Optimize();
+            //chunk.mesh.MarkDynamic();
+            
 
             chunk.generated[0] |= toGenerate[0];
             chunk.generated[1] |= toGenerate[1];
@@ -357,11 +362,25 @@ public class MeshGenerator : MonoBehaviour {
                 toGenerate[1] = true;    
             }        
         if (!chunk.generated[2])
-            if (existingChunks.TryGetValue(chunk.coord + xEdge + zEdge, out edgeChunk) && toGenerate[0] && toGenerate[1])//&& existingChunks.ContainsKey(chunk.coord + xEdge) && existingChunks.ContainsKey(chunk.coord + zEdge))
+            if (existingChunks.TryGetValue(chunk.coord + xEdge + zEdge, out edgeChunk) && existingChunks.ContainsKey(chunk.coord + xEdge) && existingChunks.ContainsKey(chunk.coord + zEdge))//toGenerate[0] && toGenerate[1])//&& existingChunks.ContainsKey(chunk.coord + xEdge) && existingChunks.ContainsKey(chunk.coord + zEdge))
             {
                 for (int i = 0; i < Chunk.size.height; i++)
                 {
                     edgeArray[(Chunk.size.width + Chunk.size.width)*Chunk.size.height + i] = edgeChunk.blocks[0, i, 0]; // y
+                }
+                if (!toGenerate[0]) {
+                    existingChunks.TryGetValue(chunk.coord + zEdge, out edgeChunk);
+                    for (int i = 0; i < Chunk.size.height; i++)
+                    {
+                        edgeArray[i*Chunk.size.width + Chunk.size.width-1] = edgeChunk.blocks[0, i, Chunk.size.width-1];
+                    }
+                }
+                if (!toGenerate[1]) {
+                    existingChunks.TryGetValue(chunk.coord + xEdge, out edgeChunk);
+                    for (int i = 0; i < Chunk.size.height; i++)
+                    {
+                        edgeArray[Chunk.size.width*Chunk.size.height + i*Chunk.size.width + Chunk.size.width-1] = edgeChunk.blocks[Chunk.size.width-1, i, 0];
+                    }
                 }
                 toGenerate[2] = true; 
             }
@@ -465,9 +484,15 @@ public class MeshGenerator : MonoBehaviour {
 
             List<Chunk> chunks = (this.chunks == null) ? new List<Chunk> (FindObjectsOfType<Chunk> ()) : this.chunks;
             foreach (var chunk in chunks) {
-                Bounds bounds = new Bounds (OriginFromCoord (chunk.coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
+                //Vector3 center = OriginFromCoord (chunk.coord);// + Vector3.one*(Chunk.size.width)/2f;
                 Gizmos.color = boundsGizmoCol;
                 Gizmos.DrawWireCube (OriginFromCoord (chunk.coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
+                // for (int x = 0; x < Chunk.size.width; x++)
+                //     for (int z = 0; z < Chunk.size.width; z++)
+                //     {
+                //         Vector3 offset = new Vector3(x, 0, z);
+                //         Gizmos.DrawLine(center + offset, center + offset + new Vector3(0, Chunk.size.height,0));
+                //     }
             }
         }
     }
