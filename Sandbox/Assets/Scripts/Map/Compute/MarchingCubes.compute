@@ -95,20 +95,9 @@ void CubeToTris (uint cubeCorners[8], uint3 index)
             }
             else c2 = cornerIndexBFromEdge[edge];
 
-            if (cubeCorners[c2] > 0)
+          
+            if (cubeCorners[c1] < 255 && cubeCorners[c2] > 0)
             {
-                if (cubeCorners[c1] == 255)
-                {
-                    if ((c1 & axis) > 0) 
-                    {
-                        vert += d * (1.0 - (127.0 + (float)cubeCorners[c2])/255.0); 
-                    }
-                    else 
-                    {
-                        vert += d * (127.0 + (float)cubeCorners[c2])/255.0;
-                    }                          
-                }
-                else
                 if ((c1 & axis) > 0) 
                 {
                     vert += d * (1.0 - ((float)cubeCorners[c1]-128)/(cubeCorners[c1] - cubeCorners[c2]));
@@ -118,18 +107,17 @@ void CubeToTris (uint cubeCorners[8], uint3 index)
                     vert += d * ((float)cubeCorners[c1]-128)/(cubeCorners[c1] - cubeCorners[c2]);
                 }
             }
-            else ////////
-            {               
+            else
+            {
                 if ((c1 & axis) > 0) 
                 {
-                    vert += d * ((1.0 - (cubeCorners[c1]-128)/255.0));
+                    vert += d * ((1.0 - (cubeCorners[c1] + cubeCorners[c2] - 128)/255.0));
                 }
                 else 
                 {
-                    vert += d * ((cubeCorners[c1]-128)/255.0);
-                }      
+                    vert += d * ((cubeCorners[c1] + cubeCorners[c2] - 128)/255.0);
+                }  
             }
-             
 
             val[j] = Origin + (float3)index + vert;
         }

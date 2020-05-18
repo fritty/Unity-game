@@ -13,8 +13,8 @@ public class Chunk : MonoBehaviour {
     public Vector3Int coord;
     [HideInInspector]
     public Mesh mesh;
-    //[HideInInspector]
-    public bool[] generated = {false, false, false};
+    [HideInInspector]
+    public bool[] generated = {false, false, false}; // flag for generated mesh edges
 
     public byte[,,] blocks; 
 
@@ -23,20 +23,34 @@ public class Chunk : MonoBehaviour {
     MeshCollider meshCollider;
     bool generateCollider;
 
+    MeshGenerator meshGenerator;
+
     public void DestroyOrDisable () {
         if (Application.isPlaying) {
             mesh.Clear ();
             gameObject.SetActive (false);
         } else {
-            DestroyImmediate (gameObject, false);
+            Destroy(gameObject);
         }
     }
 
-    // Add components/get references in case lost (references can be lost when working in the editor)
-    public void SetUp (Material mat, bool generateCollider, Vector3Int coord) {
-        this.generateCollider = generateCollider;
+    // Set basic properties
+    public void SetUp (Vector3Int coord) {        
         this.coord = coord;
-        this.name = $"Chunk ({coord.x}, {coord.y}, {coord.z})";
+        this.name = $"Chunk ({coord.x}, {coord.y}, {coord.z})";        
+
+        if (blocks == null) {
+            blocks = new byte[Chunk.size.width,Chunk.size.height,Chunk.size.width];
+        }
+        
+        if (meshGenerator == null) {
+            meshGenerator = FindObjectOfType<MeshGenerator>();
+        }            
+    }
+
+    // Set render properties
+    public void SetUpMesh (Material mat, bool generateCollider) {
+        this.generateCollider = generateCollider;
 
         meshFilter = GetComponent<MeshFilter> ();
         meshRenderer = GetComponent<MeshRenderer> ();
@@ -56,10 +70,6 @@ public class Chunk : MonoBehaviour {
         }
         if (meshCollider != null && !generateCollider) {
             DestroyImmediate (meshCollider);
-        }
-
-        if (blocks == null) {
-            blocks = new byte[Chunk.size.width,Chunk.size.height,Chunk.size.width];
         }
 
         generated[0] = generated[1] = generated[2] = false;
@@ -82,5 +92,12 @@ public class Chunk : MonoBehaviour {
             meshCollider.enabled = false;
             meshCollider.enabled = true;
         }        
+    }
+
+    public void UpdateMesh (){        
+        if (meshGenerator != null)
+            meshGenerator.UpdateChunkMesh(this);
+        else
+            Debug.Log("meshGenerator is not found");
     }
 }
