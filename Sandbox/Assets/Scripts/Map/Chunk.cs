@@ -22,8 +22,7 @@ public class Chunk : MonoBehaviour {
     MeshRenderer meshRenderer;
     MeshCollider meshCollider;
     bool generateCollider;
-
-    MeshGenerator meshGenerator;
+    
 
     public void DestroyOrDisable () {
         if (Application.isPlaying) {
@@ -34,18 +33,15 @@ public class Chunk : MonoBehaviour {
         }
     }
 
-    // Set basic properties
-    public void SetUp (Vector3Int coord) {        
+    public void SetCoord (Vector3Int coord) {        
         this.coord = coord;
-        this.name = $"Chunk ({coord.x}, {coord.y}, {coord.z})";        
+        this.name = $"Chunk ({coord.x}, {coord.y}, {coord.z})";   
+    }
 
-        if (blocks == null) {
-            blocks = new byte[Chunk.size.width,Chunk.size.height,Chunk.size.width];
-        }
-        
-        if (meshGenerator == null) {
-            meshGenerator = FindObjectOfType<MeshGenerator>();
-        }            
+    public void SetBlocks (byte[,,] blocks) {
+        if (this.blocks == null)
+            this.blocks = new byte[size.width, size.height, size.width];
+        this.blocks = blocks;
     }
 
     // Set render properties
@@ -58,6 +54,7 @@ public class Chunk : MonoBehaviour {
 
         if (meshFilter == null) {
             meshFilter = gameObject.AddComponent<MeshFilter> ();
+            
         }
 
         if (meshRenderer == null) {
@@ -75,6 +72,7 @@ public class Chunk : MonoBehaviour {
         generated[0] = generated[1] = generated[2] = false;
 
         mesh = meshFilter.sharedMesh;
+        
         if (mesh == null) {
             mesh = new Mesh ();
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
@@ -94,10 +92,25 @@ public class Chunk : MonoBehaviour {
         }        
     }
 
-    public void UpdateMesh (){        
-        if (meshGenerator != null)
-            meshGenerator.UpdateChunkMesh(this);
-        else
-            Debug.Log("meshGenerator is not found");
-    }
+    // public void GenerateMap (Vector3Int coord){
+    //     SetCoord(coord);
+
+    //     if (blocks == null) {
+    //         blocks = new byte[Chunk.size.width,Chunk.size.height,Chunk.size.width];
+    //     }
+
+    //     mapGenerator.RequestMapData(coord, OnMapDataReceived);
+    // }
+
+    // void OnMapDataReceived(MapData mapData) {
+    //     blocks = mapData.blocks;
+    // }
+
+    // public void UpdateMesh (){     
+    //     meshGenerator.RequestMeshData(OnMeshDataReceived);        
+    // }
+
+    // void OnMeshDataReceived(MeshData meshData) {
+    //     meshFilter.mesh = meshData.CreateMesh ();
+    // }
 }
