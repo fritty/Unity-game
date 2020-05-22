@@ -6,8 +6,6 @@ using System.Threading;
 
 /* Handles mesh generation */
 public class MeshGenerator : MonoBehaviour {
-
-    const int threadGroupSize = 8;  
   
     [Header ("Mesh properties")]
     public Material mat;
@@ -15,7 +13,8 @@ public class MeshGenerator : MonoBehaviour {
 
     public ComputeShader marchShader; // Shader for mesh generation
 
-    static Map map; // Reference for blocks data
+    public float chunksPerSecond = 2;
+
 
     // Buffers
     ComputeBuffer triangleBuffer; 
@@ -23,49 +22,81 @@ public class MeshGenerator : MonoBehaviour {
     ComputeBuffer triCountBuffer;
     ComputeBuffer edgeBuffer;
 
-    bool[] toGenerate = {false,false,false}; // flags for generating edges
+    Queue<Vector3Int> requestedCoords = new Queue<Vector3Int>();
+ 
 
-    Queue<ThreadInfo<MeshData>> meshDataThreadInfoQueue = new Queue<ThreadInfo<MeshData>>();
+    // Set up from map
+    Action<GeneratedDataInfo<MeshData>> meshCallback;
+    Transform viewer;
+    int viewDistance;
+
+    Dictionary<Vector3Int,Chunk> existingChunks;
 
 
-    void Awake () {
-        if (Application.isPlaying) {
-            map = FindObjectOfType<Map>();
-        }
+    void Start () {
+        StartCoroutine("ManageRequests");
     }    
 
+    IEnumerator ManageRequests() {
+        Vector3Int coord = new Vector3Int();
+        Vector3Int viewerCoord;
+        bool start = true;
+        // Endless coroutine loop
+        while (true) {
+            // Return requested data      
+            if (!start && requestedCoords.Count > 0)
+                meshCallback(new GeneratedDataInfo<MeshData>(CopyMeshData(), coord));
+                    
 
-    ////////////////////
-    /* Multithreading */
-    ////////////////////
+            // Go through requested coordinates and start generation threads if still relevant
+            if (requestedCoords.Count > 0) {
+                viewerCoord = new Vector3Int(Mathf.RoundToInt(viewer.position.x / Chunk.size.width), 0, Mathf.RoundToInt(viewer.position.z / Chunk.size.width));
+                coord = requestedCoords.Dequeue();
+                
+                // skip outdated coordinates
+                while ((Mathf.Abs(coord.x - viewerCoord.x) > viewDistance || Mathf.Abs(coord.z - viewerCoord.z) > viewDistance) && requestedCoords.Count > 0) {
+                    coord = requestedCoords.Dequeue();
+                }
+                
+                if (Mathf.Abs(coord.x - viewerCoord.x) <= viewDistance && Mathf.Abs(coord.z - viewerCoord.z) <= viewDistance) {
+                    Chunk chunk;
+                    Chunk chunkX;
+                    Chunk chunkZ;
+                    Chunk chunkC;
+                    if (existingChunks.TryGetValue(coord,out chunk) && existingChunks.TryGetValue(coord + Vector3Int.right,out chunkX) &&
+                        existingChunks.TryGetValue(coord + new Vector3Int(0,0,1),out chunkZ) && existingChunks.TryGetValue(coord + Vector3Int.one - Vector3Int.up,out chunkC))
+                    {
+                       GenerateChunkMesh(chunk, chunkX, chunkZ, chunkC);                    
+                       start = false;
+                    }
+                }   
+            }
 
-    void Update() {
-        // Return requested data in a main thread
-        if (meshDataThreadInfoQueue.Count > 0) {
-			for (int i = 0; i < meshDataThreadInfoQueue.Count; i++) {
-				ThreadInfo<MeshData> threadInfo = meshDataThreadInfoQueue.Dequeue ();
-				threadInfo.callback (threadInfo.parameter);
-			}
-		}    
+            // Wait for shader to finish
+            yield return new WaitForSeconds(1f/chunksPerSecond);
+        }
     }
 
-    /* Interface for requesting generation */
-    public void RequestMeshData(Chunk chunk, Chunk chunkX, Chunk chunkZ, Chunk chunkC, Action<MeshData> callback) {
-		ThreadStart threadStart = delegate {
-			MeshDataThread (chunk, chunkX, chunkZ, chunkC, callback);
-		};
-
-        chunk.SetUpMesh(mat, generateColliders);
-
-		new Thread (threadStart).Start ();
+    /* Interface */
+    public void RequestMeshData (Vector3Int coord) {
+		requestedCoords.Enqueue(coord);
 	}
 
-	void MeshDataThread(Chunk chunk, Chunk chunkX, Chunk chunkZ, Chunk chunkC, Action<MeshData> callback) {
-		MeshData meshData = GenerateChunkMesh(chunk, chunkX, chunkZ, chunkC);
-		lock (meshDataThreadInfoQueue) {
-			meshDataThreadInfoQueue.Enqueue (new ThreadInfo<MeshData> (callback, meshData));
-		}
-	}  
+    public void SetMeshCallback (Action<GeneratedDataInfo<MeshData>> callback) {
+        meshCallback = callback;
+    }
+
+    public void SetViewer (Transform viewer) {
+        this.viewer = viewer;
+    }
+
+    public void SetViewDistance (int viewDistance) {
+        this.viewDistance = viewDistance;
+    }
+
+    public void SetExistingChunks (Dictionary<Vector3Int,Chunk> existingChunks) {
+        this.existingChunks = existingChunks;
+    }
 
 
     /////////////////////
@@ -73,7 +104,13 @@ public class MeshGenerator : MonoBehaviour {
     /////////////////////
 
     /* Generate chunk mesh based on its blocks */
-    public MeshData GenerateChunkMesh (Chunk chunk, Chunk chunkX, Chunk chunkZ, Chunk chunkC) {        
+    void GenerateChunkMesh (Chunk chunk, Chunk chunkX, Chunk chunkZ, Chunk chunkC) {  
+
+        if (chunk == null || chunkX == null || chunkZ == null || chunkC == null) 
+        {
+            Debug.Log("null chunk reference");
+            return;    
+        }
         
         CreateBuffers ();
         
@@ -81,40 +118,13 @@ public class MeshGenerator : MonoBehaviour {
         int kernelHandle = marchShader.FindKernel("March");
         
         pointsBuffer.SetData(chunk.blocks); // copy blocks data
-        GenerateEdgeBuffer(chunk, chunkX, chunkZ, chunkC); // try to get edge points        
+        GenerateEdgeBuffer(chunkX, chunkZ, chunkC); // get edge points        
         DispatchMarchShader(kernelHandle, chunk.coord); // compute mesh
-        return CopyMeshData (chunk); 
-
-        // // Edge mesh for adjacent chunks
-        // kernelHandle = marchShader.FindKernel("MarchEdge");
-        // Chunk edgeChunk;
-        // Vector3Int xEdge = new Vector3Int(1,0,0);
-        // Vector3Int zEdge = new Vector3Int(0,0,1);
-        // if (mapGenerator.existingChunks.TryGetValue(chunk.coord - zEdge, out edgeChunk))
-        // {
-        //     if (!edgeChunk.generated[0])
-        //     {
-        //         CreateMesh(edgeChunk, kernelHandle, true);
-        //     }
-        // }
-        // if (mapGenerator.existingChunks.TryGetValue(chunk.coord - xEdge, out edgeChunk))
-        // {
-        //     if (!edgeChunk.generated[1])
-        //     {
-        //         CreateMesh(edgeChunk, kernelHandle, true);
-        //     }
-        // }
-        // if (mapGenerator.existingChunks.TryGetValue(chunk.coord - xEdge - zEdge, out edgeChunk))
-        // {
-        //     if (!edgeChunk.generated[2])
-        //     {                
-        //         CreateMesh(edgeChunk, kernelHandle, true);
-        //     }
-        // }
+        //return new GeneratedDataInfo<MeshData>(CopyMeshData (chunk), chunk.coord);
     }  
 
     /* Add data from shader output to chunk mesh */
-    MeshData CopyMeshData (Chunk chunk)
+    MeshData CopyMeshData ()
     {  
         // Get number of triangles in the triangle buffer
         ComputeBuffer.CopyCount (triangleBuffer, triCountBuffer, 0);
@@ -124,22 +134,15 @@ public class MeshGenerator : MonoBehaviour {
 
         if (numTris > 0)
         {
-            MeshData meshData = new MeshData(numTris);
+            MeshData meshData = new MeshData(numTris, mat, generateColliders);
             // Get triangle data from shader
 
             Triangle[] tris = new Triangle[numTris];
-            triangleBuffer.GetData (tris, 0, 0, numTris);
-
-            //var meshVertices = new Vector3[(numTris) * 3];
-            //var meshTriangles = new int[(numTris) * 3];            
+            triangleBuffer.GetData (tris, 0, 0, numTris);         
 
             // add new mesh data
             for (int i = 0; i < numTris; i++) {
                 meshData.AddTriangle(tris[i]);
-                // for (int j = 0; j < 3; j++) {
-                //     meshTriangles[i * 3 + j] = i * 3 + j;
-                //     meshVertices[i * 3 + j] = tris[i][j];
-                // }
             }            
 
             return meshData;
@@ -150,14 +153,17 @@ public class MeshGenerator : MonoBehaviour {
     /* Execute mesh generation on GPU */
     void DispatchMarchShader (int kernelHandle, Vector3Int coord)
     {
-        int threadGroupsX;
-        int threadGroupsY;
-        int threadGroupsZ;        
+        uint threadGroupsX;
+        uint threadGroupsY;
+        uint threadGroupsZ;     
+        
+        marchShader.GetKernelThreadGroupSizes(kernelHandle, out threadGroupsX, out threadGroupsY, out threadGroupsZ);
 
         triangleBuffer.SetCounterValue (0);
        
-        threadGroupsX = threadGroupsZ = Mathf.CeilToInt ((Chunk.size.width) / (float) threadGroupSize);        
-        threadGroupsY = Mathf.CeilToInt ((Chunk.size.height) / (float) threadGroupSize);  
+        threadGroupsX = (uint)Mathf.CeilToInt ((Chunk.size.width) / (float)threadGroupsX);
+        threadGroupsZ = (uint)Mathf.CeilToInt ((Chunk.size.width) / (float)threadGroupsZ);      
+        threadGroupsY = (uint)Mathf.CeilToInt ((Chunk.size.height) / (float)threadGroupsY);  
 
         marchShader.SetBuffer (kernelHandle, "points", pointsBuffer);
         marchShader.SetBuffer (kernelHandle, "edge", edgeBuffer);
@@ -165,15 +171,15 @@ public class MeshGenerator : MonoBehaviour {
         marchShader.SetInt ("Width", Chunk.size.width);
         marchShader.SetInt ("Height", Chunk.size.height);
         marchShader.SetVector ("Origin", OriginFromCoord(coord));
-        marchShader.SetBool ("ZEdgeGenerated", toGenerate[0]);
-        marchShader.SetBool ("XEdgeGenerated", toGenerate[1]);
-        marchShader.SetBool ("CornerEdgeGenerated", toGenerate[2]);
+        marchShader.SetBool ("ZEdgeGenerated", true);
+        marchShader.SetBool ("XEdgeGenerated", true);
+        marchShader.SetBool ("CornerEdgeGenerated", true);
             
-        marchShader.Dispatch (kernelHandle, threadGroupsX, threadGroupsY, threadGroupsZ);
+        marchShader.Dispatch (kernelHandle, (int)threadGroupsX, (int)threadGroupsY, (int)threadGroupsZ);
     }
 
     /* Copies edge data from adjacent chunks */
-    void GenerateEdgeBuffer (Chunk chunk, Chunk chunkX, Chunk chunkZ, Chunk chunkC)
+    void GenerateEdgeBuffer (Chunk chunkX, Chunk chunkZ, Chunk chunkC)
     {
         Vector3Int xEdge = new Vector3Int(1,0,0);
         Vector3Int zEdge = new Vector3Int(0,0,1);
@@ -200,13 +206,10 @@ public class MeshGenerator : MonoBehaviour {
 
     void CreateBuffers () {
         int numPoints = Chunk.size.width * Chunk.size.height * Chunk.size.width;
-
-        // Always create buffers in editor (since buffers are released immediately to prevent memory leak)
-        // Otherwise, only create if null or if size has changed
-        if (!Application.isPlaying || (pointsBuffer == null || numPoints != pointsBuffer.count)) {
-            if (Application.isPlaying) {
-                ReleaseBuffers ();
-            }
+        
+        if (pointsBuffer == null || numPoints/4 != pointsBuffer.count) {            
+            ReleaseBuffers ();
+            
             int maxTriangleCount = (Chunk.size.width-1) * (Chunk.size.height-1) * (Chunk.size.width-1) * 5;
             triangleBuffer = new ComputeBuffer (maxTriangleCount, sizeof (float) * 3 * 3, ComputeBufferType.Append);
             pointsBuffer = new ComputeBuffer (numPoints/4, sizeof(byte)*4);
@@ -257,10 +260,12 @@ public class MeshData {
 
 	int triangleIndex;
 
-	public MeshData(int numTris) {
+	public MeshData(int numTris, Material mat, bool generateColliders) {
 		vertices = new Vector3[(numTris) * 3];
 		triangles = new int[(numTris) * 3];
         triangleIndex = 0;
+        this.mat = mat;
+        this.generateColliders = generateColliders;
 	}
 
 	public void AddTriangle(Triangle tri) {        

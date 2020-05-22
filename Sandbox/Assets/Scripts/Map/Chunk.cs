@@ -14,14 +14,13 @@ public class Chunk : MonoBehaviour {
     [HideInInspector]
     public Mesh mesh;
     [HideInInspector]
-    public bool[] generated = {false, false, false}; // flag for generated mesh edges
-
     public byte[,,] blocks; 
 
     MeshFilter meshFilter;
     MeshRenderer meshRenderer;
     MeshCollider meshCollider;
     bool generateCollider;
+    bool hasMesh = false;
     
 
     public void DestroyOrDisable () {
@@ -36,6 +35,7 @@ public class Chunk : MonoBehaviour {
     public void SetCoord (Vector3Int coord) {        
         this.coord = coord;
         this.name = $"Chunk ({coord.x}, {coord.y}, {coord.z})";   
+        hasMesh = false;
     }
 
     public void SetBlocks (byte[,,] blocks) {
@@ -45,21 +45,20 @@ public class Chunk : MonoBehaviour {
     }
 
     // Set render properties
-    public void SetUpMesh (Material mat, bool generateCollider) {
-        this.generateCollider = generateCollider;
+    public void SetUpMesh (MeshData meshData) {
+        this.generateCollider = meshData.generateColliders;
 
         meshFilter = GetComponent<MeshFilter> ();
         meshRenderer = GetComponent<MeshRenderer> ();
         meshCollider = GetComponent<MeshCollider> ();
 
         if (meshFilter == null) {
-            meshFilter = gameObject.AddComponent<MeshFilter> ();
-            
+            meshFilter = gameObject.AddComponent<MeshFilter> ();            
         }
 
         if (meshRenderer == null) {
             meshRenderer = gameObject.AddComponent<MeshRenderer> ();
-            meshRenderer.material = mat;
+            meshRenderer.material = meshData.mat;
         }
 
         if (meshCollider == null && generateCollider) {
@@ -69,18 +68,25 @@ public class Chunk : MonoBehaviour {
             DestroyImmediate (meshCollider);
         }
 
-        generated[0] = generated[1] = generated[2] = false;
-
-        mesh = meshFilter.sharedMesh;
+        mesh = meshFilter.sharedMesh = meshData.CreateMesh();
+        //mesh = meshFilter.sharedMesh;
         
-        if (mesh == null) {
-            mesh = new Mesh ();
-            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-            meshFilter.sharedMesh = mesh;
-        }
-        else {
-            mesh.Clear();
-        }
+        // if (mesh == null) {
+        //     mesh = new Mesh ();
+        //     mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        //     meshFilter.sharedMesh = mesh;
+        // }
+        // else {
+        //     mesh.Clear();
+        // }
+
+        // mesh.vertices = meshData.vertices;
+        // mesh.triangles = meshData.triangles;
+        // mesh.RecalculateNormals ();
+        // mesh.Optimize();
+        //mesh = meshData.CreateMesh();
+
+        hasMesh = true;
 
         if (generateCollider) {
             if (meshCollider.sharedMesh == null) {
@@ -90,6 +96,10 @@ public class Chunk : MonoBehaviour {
             meshCollider.enabled = false;
             meshCollider.enabled = true;
         }        
+    }
+
+    public bool HasMesh () {
+        return hasMesh;
     }
 
     // public void GenerateMap (Vector3Int coord){

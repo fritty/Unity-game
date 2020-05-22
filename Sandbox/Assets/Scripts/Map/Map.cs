@@ -27,33 +27,43 @@ public class Map : MonoBehaviour {
     
     [HideInInspector]
     public Dictionary<Vector3Int, Chunk> existingChunks;
-    Dictionary<Vector3Int, Chunk> chunksToGenerate;
+    Queue<Chunk> chunksForRecycling;
 
     GameObject chunkHolder;
     const string chunkHolderName = "Chunks Holder";
 
-    Vector3Int viewerCoord = new Vector3Int();
+    public Vector3Int viewerCoord;
 
-    Vector3Int generationGizmo = new Vector3Int();
+    Vector3Int generationGizmo;
 
 
     void Update () {
-        // Update endless terrain
-        if ((Application.isPlaying)) {
+        // Update terrain
+        //if ((Application.isPlaying)) {
             InitVisibleChunks ();
-        }
+        //}
     }
     
-    void Awake () {
-        if (Application.isPlaying) {
-            InitVariableChunkStructures ();
-            CreateChunkHolder ();
- 
-            var oldChunks = FindObjectsOfType<Chunk> ();
-            for (int i = oldChunks.Length - 1; i >= 0; i--) {
-                Destroy (oldChunks[i].gameObject);
-            }
+    void Awake () { 
+        InitVariableChunkStructures ();
+        CreateChunkHolder ();
+
+        var oldChunks = FindObjectsOfType<Chunk> ();
+        for (int i = oldChunks.Length - 1; i >= 0; i--) {
+            Destroy (oldChunks[i].gameObject);
         }
+        
+        generationGizmo = new Vector3Int(0, 0, 0);
+        viewerCoord = new Vector3Int(0, 0, 0);
+        
+        mapGenerator.SetMapCallback(OnMapDataReceived);
+        mapGenerator.SetViewer(viewer);
+        mapGenerator.SetViewDistance(viewDistance);
+
+        meshGenerator.SetMeshCallback(OnMeshDataReceived);
+        meshGenerator.SetViewer(viewer);
+        meshGenerator.SetViewDistance(viewDistance);
+        meshGenerator.SetExistingChunks(existingChunks);
     }
 
     void Start () {
@@ -64,46 +74,10 @@ public class Map : MonoBehaviour {
             {
                 coord = new Vector3Int(x, 0, z);
                 chunk = CreateChunk();
-                chunk.SetCoord(new Vector3Int(x, 0, z));
-                existingChunks.Add(coord, chunk);
+                chunksForRecycling.Enqueue(chunk);
+                mapGenerator.RequestMapData(coord);
             }
-    }
-
-    void OnDrawGizmos () {
-        if (Application.isPlaying) {
-            var chunks = existingChunks.Values;            
-            foreach (var chunk in chunks) {                
-                if (showBoundsGizmo) {
-                    Gizmos.color = boundsGizmoCol;
-                    Gizmos.DrawWireCube (OriginFromCoord (chunk.coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
-                }
-                if (showCellGizmo) {
-                    Gizmos.color = boundsCellCol;
-                    Vector3 center = OriginFromCoord (chunk.coord);
-                    Vector3 size = new Vector3(0.1f, 0.1f, 0.1f);
-                    for (int x = 0; x < Chunk.size.width; x++)
-                        for (int z = 0; z < Chunk.size.width; z++)
-                            for (int y = 0; y < Chunk.size.height; y++)
-                                {
-                                    if (chunk.blocks[z,y,x] < 255 && chunk.blocks[z,y,x] > 0) {
-                                    Vector3 offset = new Vector3(x, y, z);
-                                    Gizmos.color = new Color(boundsCellCol.r, boundsCellCol.g, boundsCellCol.b, chunk.blocks[z,y,x] / 255f);
-                                    Gizmos.DrawWireCube(center + offset, size);
-                                    }
-                                }
-                }
-            }
-            if (showBoundsGizmo) {
-                chunks = chunksToGenerate.Values;
-                Gizmos.color = Color.red;
-                foreach (var chunk in chunks) {
-                    Gizmos.DrawWireCube (OriginFromCoord (chunk.coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
-                }
-                Gizmos.color = Color.green;
-                Gizmos.DrawWireCube (OriginFromCoord (generationGizmo) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
-            }
-        }
-    }
+    }  
 
 
     ///////////////////////
@@ -116,10 +90,7 @@ public class Map : MonoBehaviour {
             return;
         }
                
-        Vector3Int currentCoord = new Vector3Int();        
-        currentCoord.x = Mathf.RoundToInt(viewer.position.x / Chunk.size.width);
-        currentCoord.y = 0;
-        currentCoord.z = Mathf.RoundToInt(viewer.position.z / Chunk.size.width);
+        Vector3Int currentCoord = new Vector3Int(Mathf.RoundToInt(viewer.position.x / Chunk.size.width), 0, Mathf.RoundToInt(viewer.position.z / Chunk.size.width));
         
         // Go through world bound difference and delete/mark for generation
         if (viewerCoord != currentCoord){ // only if coord is changed
@@ -127,8 +98,6 @@ public class Map : MonoBehaviour {
 
             Vector3Int[] regionX = new Vector3Int[2];
             Vector3Int[] regionZ = new Vector3Int[2];
-
-            Chunk tmpChunk;
 
             // regions for recalculation
             regionX[0] = new Vector3Int(currentCoord.x > previousCoord.x ? previousCoord.x - viewDistance 
@@ -138,33 +107,25 @@ public class Map : MonoBehaviour {
                                                                          : previousCoord.x + viewDistance + 1, 0, 
                                         previousCoord.z + viewDistance + 1);
 
-            if (Mathf.Abs(currentCoord.z - previousCoord.z) < 2*viewDistance + 1)
-            {
-                regionZ[0] = new Vector3Int(Mathf.Max(currentCoord.x - viewDistance, previousCoord.x - viewDistance), 0, 
-                                        currentCoord.z > previousCoord.z ? previousCoord.z - viewDistance : currentCoord.z + viewDistance + 1);
-                regionZ[1] = new Vector3Int(Mathf.Min(currentCoord.x + viewDistance + 1, previousCoord.x + viewDistance + 1), 0, 
-                                        currentCoord.z > previousCoord.z ? currentCoord.z - viewDistance : previousCoord.z + viewDistance + 1);
-            }
-            else
-            {
-                regionZ[0] = regionZ[1] = new Vector3Int(0, 0, 0);
-            }
+            
+            regionZ[0] = new Vector3Int(Mathf.Max(currentCoord.x - viewDistance, previousCoord.x - viewDistance), 0, 
+                                        currentCoord.z > previousCoord.z ? previousCoord.z - viewDistance 
+                                                                         : Mathf.Max(currentCoord.z + viewDistance + 1,previousCoord.z - viewDistance));
+            regionZ[1] = new Vector3Int(Mathf.Min(currentCoord.x + viewDistance + 1, previousCoord.x + viewDistance + 1), 0, 
+                                        currentCoord.z > previousCoord.z ? Mathf.Min(currentCoord.z - viewDistance, previousCoord.z + viewDistance + 1) 
+                                                                         : previousCoord.z + viewDistance + 1);
+           
 
             
             // loop through old regions and mark them for regeneration as new
             for (int x = regionX[0].x; x < regionX[1].x; x++) {
                 for (int z = regionX[0].z; z < regionX[1].z; z++)
                 {
+                    Chunk tmpChunk;
                     Vector3Int key = new Vector3Int(x, 0, z);
                     if (existingChunks.TryGetValue(key, out tmpChunk)) {
                         existingChunks.Remove(key);
-                    }
-                    else if (chunksToGenerate.TryGetValue(key, out tmpChunk)) {
-                        chunksToGenerate.Remove(key);
-                    }
-                    else
-                    {
-                        Debug.Log("no generated chunk found");
+                        chunksForRecycling.Enqueue(tmpChunk);
                     }
 
                     if (Mathf.Abs(currentCoord.x - previousCoord.x) < 2*viewDistance + 1)
@@ -179,62 +140,81 @@ public class Map : MonoBehaviour {
                         key = new Vector3Int(x + currentCoord.x - previousCoord.x, 0, z + currentCoord.z - previousCoord.z);
                     }
 
-                    mapGenerator.RequestMapData(key, OnMapDataReceived);                                                
-                    chunksToGenerate.Add(key, tmpChunk);
-                    tmpChunk.SetCoord(key);
+                    mapGenerator.RequestMapData(key); 
                 }
             }
             for (int z = regionZ[0].z; z < regionZ[1].z; z++) {
                 for (int x = regionZ[0].x; x < regionZ[1].x; x++)
                 {
+                    Chunk tmpChunk;
                     Vector3Int key = new Vector3Int(x, 0, z);
                     if (existingChunks.TryGetValue(key, out tmpChunk)) {
                         existingChunks.Remove(key);
-                    }
-                    else if (chunksToGenerate.TryGetValue(key, out tmpChunk)) {
-                        chunksToGenerate.Remove(key);
+                        chunksForRecycling.Enqueue(tmpChunk);
+                    }    
+
+                    if (Mathf.Abs(currentCoord.z - previousCoord.z) < 2*viewDistance + 1)
+                    {
+                        if (currentCoord.z > previousCoord.z)
+                            key = key + new Vector3Int(0, 0, 2*viewDistance+1); 
+                        else  
+                            key = key + new Vector3Int(0, 0, -2*viewDistance-1); 
                     }
                     else
                     {
-                        Debug.Log("no generated chunk found");
+                        key = new Vector3Int(x, 0, z + currentCoord.z - previousCoord.z);
                     }
 
-                    if (currentCoord.z > previousCoord.z)
-                        key = key + new Vector3Int(0, 0, 2*viewDistance+1); 
-                    else  
-                        key = key + new Vector3Int(0, 0, -2*viewDistance-1); 
-
-                    mapGenerator.RequestMapData(key, OnMapDataReceived);                                                
-                    chunksToGenerate.Add(key, tmpChunk);
-                    tmpChunk.SetCoord(key);
+                    mapGenerator.RequestMapData(key);
                 }
             }            
 
             viewerCoord = currentCoord;
-        }
-
-        // Go through view distance and create missing meshes
-               
+        }      
     }
 
-    void OnMapDataReceived(MapData mapData) {
-        Chunk chunk;
-        if (chunksToGenerate.TryGetValue(mapData.coord, out chunk))
+    void OnMapDataReceived(GeneratedDataInfo<MapData> mapData) {
+        if (Mathf.Abs(mapData.coord.x - viewerCoord.x) <= viewDistance && 
+            Mathf.Abs(mapData.coord.z - viewerCoord.z) <= viewDistance && 
+            !existingChunks.ContainsKey(mapData.coord))//chunksToGenerate.TryGetValue(mapData.coord, out chunk))
         {
-            chunksToGenerate.Remove(mapData.coord);
-            chunk.blocks = mapData.blocks;
+            Chunk chunk = chunksForRecycling.Dequeue();
+            chunk.SetBlocks(mapData.data.blocks);
             chunk.SetCoord(mapData.coord);
             existingChunks.Add(mapData.coord, chunk);
 
-            //meshGenerator.RequestMeshData(chunk,)
+            TryToGenerateMesh(chunk);
+            if (existingChunks.TryGetValue(mapData.coord - new Vector3Int(1, 0, 0), out chunk))
+                TryToGenerateMesh(chunk);
+            if (existingChunks.TryGetValue(mapData.coord - new Vector3Int(0, 0, 1), out chunk))
+                TryToGenerateMesh(chunk);
+            if (existingChunks.TryGetValue(mapData.coord - new Vector3Int(1, 0, 1), out chunk))
+                TryToGenerateMesh(chunk);
         }
-
         generationGizmo = mapData.coord;
     }
 
-    // void OnMeshDataReceived(MeshData meshData) {
-    //     meshFilter.mesh = meshData.CreateMesh ();
-    // }
+    void TryToGenerateMesh (Chunk chunk) {
+        if (chunk.HasMesh())
+            return;
+        Chunk chunkX;
+        Chunk chunkZ;
+        Chunk chunkC;
+        if (existingChunks.TryGetValue(chunk.coord + new Vector3Int(1,0,0), out chunkX) &&
+            existingChunks.TryGetValue(chunk.coord + new Vector3Int(0,0,1), out chunkZ) &&
+            existingChunks.TryGetValue(chunk.coord + new Vector3Int(1,0,1), out chunkC))
+        {
+            meshGenerator.RequestMeshData(chunk.coord);
+        }    
+    }
+
+    void OnMeshDataReceived(GeneratedDataInfo<MeshData> meshData) {
+        Chunk chunk;
+        if (existingChunks.TryGetValue(meshData.coord, out chunk))
+        {
+            chunk.SetUpMesh(meshData.data);
+        }       
+    }
 
     bool IsVisibleFrom (Bounds bounds, Camera camera) {
         Plane[] planes = GeometryUtility.CalculateFrustumPlanes (camera);
@@ -268,19 +248,58 @@ public class Map : MonoBehaviour {
 
     void InitVariableChunkStructures () {        
         existingChunks = new Dictionary<Vector3Int, Chunk> ();
-        chunksToGenerate = new Dictionary<Vector3Int, Chunk> ();
+        //chunksToGenerate = new Dictionary<Vector3Int, Chunk> ();
+        chunksForRecycling = new Queue<Chunk>();
     }    
+
+    void OnDrawGizmos () {
+        if (Application.isPlaying) {
+            var chunks = existingChunks.Values;            
+            foreach (var chunk in chunks) {                
+                if (showBoundsGizmo) {
+                    Gizmos.color = boundsGizmoCol;
+                    Gizmos.DrawWireCube (OriginFromCoord (chunk.coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
+                }
+                if (showCellGizmo) {
+                    Gizmos.color = boundsCellCol;
+                    Vector3 center = OriginFromCoord (chunk.coord);
+                    Vector3 size = new Vector3(0.1f, 0.1f, 0.1f);
+                    for (int x = 0; x < Chunk.size.width; x++)
+                        for (int z = 0; z < Chunk.size.width; z++)
+                            for (int y = 0; y < Chunk.size.height; y++)
+                                {
+                                    if (chunk.blocks[z,y,x] < 255 && chunk.blocks[z,y,x] > 0) {
+                                    Vector3 offset = new Vector3(x, y, z);
+                                    Gizmos.color = new Color(boundsCellCol.r, boundsCellCol.g, boundsCellCol.b, chunk.blocks[z,y,x] / 255f);
+                                    Gizmos.DrawWireCube(center + offset, size);
+                                    }
+                                }
+                }
+            }
+            if (showBoundsGizmo) {                
+                Gizmos.color = Color.red;
+                Gizmos.DrawWireCube (OriginFromCoord (generationGizmo) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
+                Gizmos.color = Color.green;
+                Vector3 worldOrigin = OriginFromCoord (viewerCoord - new Vector3Int(viewDistance, -1, viewDistance));
+                Vector3 worldSize = new Vector3(Chunk.size.width * (2*viewDistance+1), Chunk.size.height, Chunk.size.width * (2*viewDistance+1));
+                Gizmos.DrawLine(worldOrigin, worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0));
+                Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0), worldOrigin + worldSize);
+                Gizmos.DrawLine(worldOrigin + worldSize, worldOrigin + worldSize - new Vector3(0, 0, worldSize.z));
+                Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(0, 0, worldSize.z), worldOrigin);
+            }
+        }
+    }
 }
 
 // structure for managing generation threads
-public struct ThreadInfo<T> {
-		public readonly Action<T> callback;
-		public readonly T parameter;
+public struct GeneratedDataInfo<T> {
+        public readonly T data;
+		public readonly Vector3Int coord;
 
-		public ThreadInfo (Action<T> callback, T parameter)
+		public GeneratedDataInfo (T data, Vector3Int coord)
 		{
-			this.callback = callback;
-			this.parameter = parameter;
+			this.coord = coord;
+			this.data = data;
 		}
 		
 	}

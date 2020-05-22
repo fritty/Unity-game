@@ -314,9 +314,9 @@ MonoBehaviour:
   meshGenerator: {fileID: 1287852746}
   showBoundsGizmo: 1
   boundsGizmoCol: {r: 1, g: 1, b: 1, a: 1}
-  toGenGizmoCol: {r: 1, g: 0, b: 0, a: 1}
   showCellGizmo: 0
   boundsCellCol: {r: 1, g: 1, b: 1, a: 1}
+  viewerCoord: {x: 0, y: 0, z: 0}
 --- !u!4 &244743394
 Transform:
   m_ObjectHideFlags: 0
@@ -554,3 +554,4 @@ MonoBehaviour:
   mat: {fileID: 10303, guid: 0000000000000000f000000000000000, type: 0}
   generateColliders: 0
   marchShader: {fileID: 7200000, guid: eb5e3a4d60e5d6447a6d64ad0ca565db, type: 3}
+  chunksPerSecond: 16

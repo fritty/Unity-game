@@ -12,49 +12,88 @@ public class MapGenerator : MonoBehaviour {
     public float noiseFrequency = 0.025f;
     public ComputeShader mapShader;
 
-    Queue<ThreadInfo<MapData>> mapDataThreadInfoQueue = new Queue<ThreadInfo<MapData>>();
+    Queue<GeneratedDataInfo<MapData>> mapDataQueue = new Queue<GeneratedDataInfo<MapData>>();
+    Queue<Vector3Int> requestedCoords = new Queue<Vector3Int>();
+
+    int maxThreadsPerUpdate = 8;
+
+    // Set up from map
+    Action<GeneratedDataInfo<MapData>> mapCallback;
+    Transform viewer;
+    int viewDistance;
 
 
-    ////////////////////
-    /* Multithreading */
-    ////////////////////
-
-    void LateUpdate() {
-        // Return requested data in a main thread
-        if (mapDataThreadInfoQueue.Count > 0) {
-			for (int i = 0; i < Mathf.Min(1 ,mapDataThreadInfoQueue.Count); i++) {
-				ThreadInfo<MapData> threadInfo = mapDataThreadInfoQueue.Dequeue ();
-				threadInfo.callback (threadInfo.parameter);
-			}
-		}    
+    void FixedUpdate () {
+        ManageRequests();
     }
 
-    /* Interface for requesting generation */
-    public void RequestMapData(Vector3Int coord, Action<MapData> callback) {
-		ThreadStart threadStart = delegate {
-			MapDataThread (coord, callback);
-		};
-
-		new Thread (threadStart).Start ();
+    /* Interface */
+    public void RequestMapData (Vector3Int coord) {
+		requestedCoords.Enqueue(coord);
 	}
 
-	void MapDataThread(Vector3Int coord, Action<MapData> callback) {
+    public void SetMapCallback (Action<GeneratedDataInfo<MapData>> callback) {
+        mapCallback = callback;
+    }
+
+    public void SetViewer (Transform viewer) {
+        this.viewer = viewer;
+    }
+
+    public void SetViewDistance (int viewDistance) {
+        this.viewDistance = viewDistance;
+    }
+    
+    // Generation thread
+	void MapDataThread (Vector3Int coord) {
 		MapData mapData = Generate(coord);
-		lock (mapDataThreadInfoQueue) {
-			mapDataThreadInfoQueue.Enqueue (new ThreadInfo<MapData> (callback, mapData));
+		lock (mapDataQueue) {
+			mapDataQueue.Enqueue (new GeneratedDataInfo<MapData>(mapData, coord));
 		}
 	}   
+
+    void ManageRequests () {
+        // Return requested data
+        if (mapDataQueue.Count > 0) {
+			for (int i = 0; i < mapDataQueue.Count; i++) {
+				GeneratedDataInfo<MapData> mapData = mapDataQueue.Dequeue ();
+				mapCallback (mapData);
+			}
+		}    
+
+        // Go through requested coordinates and start generation threads if still relevant
+        if (requestedCoords.Count > 0) {
+            Vector3Int viewerCoord = new Vector3Int(Mathf.RoundToInt(viewer.position.x / Chunk.size.width), 0, Mathf.RoundToInt(viewer.position.z / Chunk.size.width));
+            int maxThreads = Mathf.Min(maxThreadsPerUpdate, requestedCoords.Count);
+            for (int i = 0; i < maxThreads && requestedCoords.Count > 0; i++) {
+                Vector3Int coord = requestedCoords.Dequeue();
+
+                // skip outdated coordinates
+                while ((Mathf.Abs(coord.x - viewerCoord.x) > viewDistance || Mathf.Abs(coord.z - viewerCoord.z) > viewDistance) && requestedCoords.Count > 0) {
+                    coord = requestedCoords.Dequeue();
+                }
+                
+                if (Mathf.Abs(coord.x - viewerCoord.x) <= viewDistance && Mathf.Abs(coord.z - viewerCoord.z) <= viewDistance) {
+                    ThreadStart threadStart = delegate {
+                        MapDataThread (coord);
+                    };
+                    new Thread (threadStart).Start ();
+                }
+            }                
+        }
+    }
 
 
     ////////////////////
     /* Map generators */
     ////////////////////
 
-    public MapData Generate (Vector3Int coord) {
+    MapData Generate (Vector3Int coord) {
         Vector3 origin = OriginFromCoord (coord);
-        return new MapData(FlatGen(origin), coord);
+        //return new MapData(FlatGen(origin), coord);
         //return GradGen(origin);
-        //return new MapData(PerlinGen(origin), coord);
+        return new MapData(PerlinGen(origin));
+        //return new MapData(ShaderGen(origin), coord);
     }
 
     byte[,,] FlatGen (Vector3 origin){
@@ -145,11 +184,9 @@ public class MapGenerator : MonoBehaviour {
 // container for chunk map data
 public struct MapData {
 	public readonly byte[,,] blocks;
-    public readonly Vector3Int coord;
 
-	public MapData (byte[,,] blocks, Vector3Int coord)
+	public MapData (byte[,,] blocks)
 	{
 		this.blocks = blocks;
-        this.coord = coord;
 	}
 }
