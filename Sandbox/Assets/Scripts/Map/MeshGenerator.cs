@@ -2,10 +2,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System;
-using System.Threading;
 
 /* Handles mesh generation */
-public class MeshGenerator : MonoBehaviour {
+public class MeshGenerator : MonoBehaviour, IGenerator {
   
     [Header ("Mesh properties")]
     public Material mat;
@@ -13,7 +12,9 @@ public class MeshGenerator : MonoBehaviour {
 
     public ComputeShader marchShader; // Shader for mesh generation
 
-    public float chunksPerSecond = 2;
+    public float targetFps = 60;
+
+    public bool log = false;
 
 
     // Buffers
@@ -27,75 +28,72 @@ public class MeshGenerator : MonoBehaviour {
 
     // Set up from map
     Action<GeneratedDataInfo<MeshData>> meshCallback;
-    Transform viewer;
-    int viewDistance;
-
-    Dictionary<Vector3Int,Chunk> existingChunks;
+    Map map;
 
 
-    void Start () {
-        StartCoroutine("ManageRequests");
-    }    
+    /* Interface */
+    public void ManageRequests () {
+        float dTime = Time.deltaTime;
+        int count = 0; // number of chunks generated per frame
+        bool repeat = true;
+        
+        while (repeat) {
+            float shaderTime = Time.realtimeSinceStartup;
+            bool generated = false;
 
-    IEnumerator ManageRequests() {
-        Vector3Int coord = new Vector3Int();
-        Vector3Int viewerCoord;
-        bool start = true;
-        // Endless coroutine loop
-        while (true) {
-            // Return requested data      
-            if (!start && requestedCoords.Count > 0)
-                meshCallback(new GeneratedDataInfo<MeshData>(CopyMeshData(), coord));
-                    
-
-            // Go through requested coordinates and start generation threads if still relevant
+            // Go through requested coordinates and generate if still relevant
             if (requestedCoords.Count > 0) {
-                viewerCoord = new Vector3Int(Mathf.RoundToInt(viewer.position.x / Chunk.size.width), 0, Mathf.RoundToInt(viewer.position.z / Chunk.size.width));
-                coord = requestedCoords.Dequeue();
+                Vector3Int viewerCoord = new Vector3Int(Mathf.FloorToInt(map.viewer.position.x / Chunk.size.width), 0, Mathf.FloorToInt(map.viewer.position.z / Chunk.size.width));
+                Vector3Int requestedCoord = requestedCoords.Dequeue();
                 
                 // skip outdated coordinates
-                while ((Mathf.Abs(coord.x - viewerCoord.x) > viewDistance || Mathf.Abs(coord.z - viewerCoord.z) > viewDistance) && requestedCoords.Count > 0) {
-                    coord = requestedCoords.Dequeue();
+                while ((Mathf.Abs(requestedCoord.x - viewerCoord.x) > map.viewDistance || Mathf.Abs(requestedCoord.z - viewerCoord.z) > map.viewDistance) && requestedCoords.Count > 0) {
+                    requestedCoord = requestedCoords.Dequeue();
                 }
                 
-                if (Mathf.Abs(coord.x - viewerCoord.x) <= viewDistance && Mathf.Abs(coord.z - viewerCoord.z) <= viewDistance) {
+                if (Mathf.Abs(requestedCoord.x - viewerCoord.x) <= map.viewDistance && Mathf.Abs(requestedCoord.z - viewerCoord.z) <= map.viewDistance) {
                     Chunk chunk;
                     Chunk chunkX;
                     Chunk chunkZ;
                     Chunk chunkC;
-                    if (existingChunks.TryGetValue(coord,out chunk) && existingChunks.TryGetValue(coord + Vector3Int.right,out chunkX) &&
-                        existingChunks.TryGetValue(coord + new Vector3Int(0,0,1),out chunkZ) && existingChunks.TryGetValue(coord + Vector3Int.one - Vector3Int.up,out chunkC))
+                    if (map.existingChunks.TryGetValue(requestedCoord,out chunk) && map.existingChunks.TryGetValue(requestedCoord + Vector3Int.right,out chunkX) &&
+                        map.existingChunks.TryGetValue(requestedCoord + new Vector3Int(0,0,1),out chunkZ) && map.existingChunks.TryGetValue(requestedCoord + Vector3Int.one - Vector3Int.up,out chunkC))
                     {
-                       GenerateChunkMesh(chunk, chunkX, chunkZ, chunkC);                    
-                       start = false;
+                        GenerateChunkMesh(chunk, chunkX, chunkZ, chunkC);                    
+                        
+                        // Return requested data
+                        meshCallback(new GeneratedDataInfo<MeshData>(CopyMeshData(), requestedCoord));
+
+                        if (log) { // log number of chunks generated per frame             
+                            count++;
+                            Debug.Log(count);
+                        }
+                        generated = true;
                     }
                 }   
             }
 
-            // Wait for shader to finish
-            yield return new WaitForSeconds(1f/chunksPerSecond);
+            if (!generated)            
+                repeat = false; // no more requests
+
+            // estimate time required for generation and stop if it exceedes framerate
+            shaderTime = Time.realtimeSinceStartup - shaderTime;
+            dTime += shaderTime;
+            if (dTime + shaderTime > 1/targetFps)
+                repeat = false; // no more time
         }
     }
 
-    /* Interface */
-    public void RequestMeshData (Vector3Int coord) {
+    public void RequestData (Vector3Int coord) {
 		requestedCoords.Enqueue(coord);
 	}
 
-    public void SetMeshCallback (Action<GeneratedDataInfo<MeshData>> callback) {
+    public void SetCallback (Action<GeneratedDataInfo<MeshData>> callback) {
         meshCallback = callback;
     }
 
-    public void SetViewer (Transform viewer) {
-        this.viewer = viewer;
-    }
-
-    public void SetViewDistance (int viewDistance) {
-        this.viewDistance = viewDistance;
-    }
-
-    public void SetExistingChunks (Dictionary<Vector3Int,Chunk> existingChunks) {
-        this.existingChunks = existingChunks;
+    public void SetMapReference (Map map) {
+        this.map = map;
     }
 
 
@@ -105,25 +103,17 @@ public class MeshGenerator : MonoBehaviour {
 
     /* Generate chunk mesh based on its blocks */
     void GenerateChunkMesh (Chunk chunk, Chunk chunkX, Chunk chunkZ, Chunk chunkC) {  
-
-        if (chunk == null || chunkX == null || chunkZ == null || chunkC == null) 
-        {
-            Debug.Log("null chunk reference");
-            return;    
-        }
         
         CreateBuffers ();
         
-        // Current chunk mesh
         int kernelHandle = marchShader.FindKernel("March");
         
         pointsBuffer.SetData(chunk.blocks); // copy blocks data
         GenerateEdgeBuffer(chunkX, chunkZ, chunkC); // get edge points        
         DispatchMarchShader(kernelHandle, chunk.coord); // compute mesh
-        //return new GeneratedDataInfo<MeshData>(CopyMeshData (chunk), chunk.coord);
     }  
 
-    /* Add data from shader output to chunk mesh */
+    /* Copy data from shader output */
     MeshData CopyMeshData ()
     {  
         // Get number of triangles in the triangle buffer
@@ -170,10 +160,7 @@ public class MeshGenerator : MonoBehaviour {
         marchShader.SetBuffer (kernelHandle, "triangles", triangleBuffer);
         marchShader.SetInt ("Width", Chunk.size.width);
         marchShader.SetInt ("Height", Chunk.size.height);
-        marchShader.SetVector ("Origin", OriginFromCoord(coord));
-        marchShader.SetBool ("ZEdgeGenerated", true);
-        marchShader.SetBool ("XEdgeGenerated", true);
-        marchShader.SetBool ("CornerEdgeGenerated", true);
+        //marchShader.SetVector ("Origin", OriginFromCoord(coord));
             
         marchShader.Dispatch (kernelHandle, (int)threadGroupsX, (int)threadGroupsY, (int)threadGroupsZ);
     }
@@ -195,13 +182,6 @@ public class MeshGenerator : MonoBehaviour {
             }
 
         edgeBuffer.SetData(edgeArray);
-    }
-   
-
-    void OnDestroy () {
-        if (Application.isPlaying) {
-            ReleaseBuffers ();
-        }
     }
 
     void CreateBuffers () {
@@ -227,8 +207,10 @@ public class MeshGenerator : MonoBehaviour {
         }
     }
 
-    Vector3 OriginFromCoord (Vector3Int coord) {
-        return new Vector3 (coord.x * Chunk.size.width, coord.y * Chunk.size.height, coord.z * Chunk.size.width);
+    void OnDestroy () {
+        if (Application.isPlaying) {
+            ReleaseBuffers ();
+        }
     }
 }
 
@@ -285,5 +267,4 @@ public class MeshData {
 		mesh.RecalculateNormals ();
 		return mesh;
 	}
-
 }

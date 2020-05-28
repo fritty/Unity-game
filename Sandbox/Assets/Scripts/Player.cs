@@ -8,12 +8,9 @@ public class Player : MonoBehaviour
     public float Speed;
     public float RotationSpeed;
 
-    RaycastHit hit;
-    List<Vector3> wat;
-
     void Start()
     {
-        transform.position = Vector3.up * 15;
+        transform.position = Vector3.up * 30;
         transform.rotation = Quaternion.LookRotation(new Vector3(0,0,1));
         cam.transform.SetParent(transform);
         cam.transform.position = transform.position;
@@ -35,6 +32,18 @@ public class Player : MonoBehaviour
             transform.Translate(inputDirection, Space.Self);
             transform.Rotate(0, inputRotation.y, 0);
             cam.transform.Rotate(inputRotation.x, 0, 0);
+        }
+    }
+
+    void OnDrawGizmos () {
+        if (Application.isPlaying) {
+            float minX = Mathf.Floor(transform.position.x);
+            float minZ = Mathf.Floor(transform.position.z);
+            Gizmos.color = Color.magenta;
+            Gizmos.DrawLine(new Vector3(minX, 0, minZ), new Vector3(minX, 32, minZ));
+            Gizmos.DrawLine(new Vector3(minX, 0, minZ + 1), new Vector3(minX, 32, minZ + 1));
+            Gizmos.DrawLine(new Vector3(minX + 1, 0, minZ), new Vector3(minX + 1, 32, minZ));
+            Gizmos.DrawLine(new Vector3(minX + 1, 0, minZ + 1), new Vector3(minX + 1, 32, minZ + 1));
         }
     }
 }

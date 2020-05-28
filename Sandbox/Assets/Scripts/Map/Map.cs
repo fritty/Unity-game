@@ -8,10 +8,7 @@ using System.Threading;
 public class Map : MonoBehaviour {
 
     [Header ("General Settings")]
-
     public int viewDistance = 10;
-    public bool cullView = false; // for destroying meshes outside viewDistance
-
     public Transform viewer;
 
     [Header ("Generators")]
@@ -19,29 +16,38 @@ public class Map : MonoBehaviour {
     public MeshGenerator meshGenerator;
 
     [Header ("Gizmos")]
-    public bool showBoundsGizmo = true;
-    public Color boundsGizmoCol = Color.white;
-    public bool showCellGizmo = false;
-    public Color boundsCellCol = Color.white;
+    [SerializeField]
+    bool showBoundsGizmo = true;
+    [SerializeField]
+    Color chunksGizmoCol = Color.white;
+    [SerializeField]
+    Color generatedChunksGizmoCol = Color.green;
+    [SerializeField]
+    bool showBlocksGizmo = false;
     
     
-    [HideInInspector]
     public Dictionary<Vector3Int, Chunk> existingChunks;
     Queue<Chunk> chunksForRecycling;
 
     GameObject chunkHolder;
     const string chunkHolderName = "Chunks Holder";
 
-    public Vector3Int viewerCoord;
+    Vector3Int viewerCoord;
 
     Vector3Int generationGizmo;
 
 
     void Update () {
         // Update terrain
-        //if ((Application.isPlaying)) {
-            InitVisibleChunks ();
-        //}
+        RequestVisibleChunks ();
+    }
+
+    void FixedUpdate () {
+        mapGenerator.ManageRequests();
+    }
+
+    void LateUpdate() { 
+        meshGenerator.ManageRequests();
     }
     
     void Awake () { 
@@ -56,14 +62,13 @@ public class Map : MonoBehaviour {
         generationGizmo = new Vector3Int(0, 0, 0);
         viewerCoord = new Vector3Int(0, 0, 0);
         
-        mapGenerator.SetMapCallback(OnMapDataReceived);
-        mapGenerator.SetViewer(viewer);
-        mapGenerator.SetViewDistance(viewDistance);
+        mapGenerator.SetCallback(OnMapDataReceived);
+        mapGenerator.SetMapReference(this);
 
-        meshGenerator.SetMeshCallback(OnMeshDataReceived);
-        meshGenerator.SetViewer(viewer);
-        meshGenerator.SetViewDistance(viewDistance);
-        meshGenerator.SetExistingChunks(existingChunks);
+        meshGenerator.SetCallback(OnMeshDataReceived);
+        meshGenerator.SetMapReference(this);
+
+        transform.position = Vector3.zero;
     }
 
     void Start () {
@@ -75,7 +80,7 @@ public class Map : MonoBehaviour {
                 coord = new Vector3Int(x, 0, z);
                 chunk = CreateChunk();
                 chunksForRecycling.Enqueue(chunk);
-                mapGenerator.RequestMapData(coord);
+                mapGenerator.RequestData(coord);
             }
     }  
 
@@ -85,12 +90,12 @@ public class Map : MonoBehaviour {
     ///////////////////////
     
     /* Create/destroy chunks based on view distance */
-    void InitVisibleChunks () {
+    void RequestVisibleChunks () {
         if (existingChunks==null) {
             return;
         }
                
-        Vector3Int currentCoord = new Vector3Int(Mathf.RoundToInt(viewer.position.x / Chunk.size.width), 0, Mathf.RoundToInt(viewer.position.z / Chunk.size.width));
+        Vector3Int currentCoord = new Vector3Int(Mathf.FloorToInt(viewer.position.x / Chunk.size.width), 0, Mathf.FloorToInt(viewer.position.z / Chunk.size.width));
         
         // Go through world bound difference and delete/mark for generation
         if (viewerCoord != currentCoord){ // only if coord is changed
@@ -140,7 +145,7 @@ public class Map : MonoBehaviour {
                         key = new Vector3Int(x + currentCoord.x - previousCoord.x, 0, z + currentCoord.z - previousCoord.z);
                     }
 
-                    mapGenerator.RequestMapData(key); 
+                    mapGenerator.RequestData(key); 
                 }
             }
             for (int z = regionZ[0].z; z < regionZ[1].z; z++) {
@@ -165,7 +170,7 @@ public class Map : MonoBehaviour {
                         key = new Vector3Int(x, 0, z + currentCoord.z - previousCoord.z);
                     }
 
-                    mapGenerator.RequestMapData(key);
+                    mapGenerator.RequestData(key);
                 }
             }            
 
@@ -176,7 +181,7 @@ public class Map : MonoBehaviour {
     void OnMapDataReceived(GeneratedDataInfo<MapData> mapData) {
         if (Mathf.Abs(mapData.coord.x - viewerCoord.x) <= viewDistance && 
             Mathf.Abs(mapData.coord.z - viewerCoord.z) <= viewDistance && 
-            !existingChunks.ContainsKey(mapData.coord))//chunksToGenerate.TryGetValue(mapData.coord, out chunk))
+            !existingChunks.ContainsKey(mapData.coord))
         {
             Chunk chunk = chunksForRecycling.Dequeue();
             chunk.SetBlocks(mapData.data.blocks);
@@ -204,7 +209,7 @@ public class Map : MonoBehaviour {
             existingChunks.TryGetValue(chunk.coord + new Vector3Int(0,0,1), out chunkZ) &&
             existingChunks.TryGetValue(chunk.coord + new Vector3Int(1,0,1), out chunkC))
         {
-            meshGenerator.RequestMeshData(chunk.coord);
+            meshGenerator.RequestData(chunk.coord);
         }    
     }
 
@@ -213,7 +218,8 @@ public class Map : MonoBehaviour {
         if (existingChunks.TryGetValue(meshData.coord, out chunk))
         {
             chunk.SetUpMesh(meshData.data);
-        }       
+        } 
+        generationGizmo = meshData.coord;     
     }
 
     bool IsVisibleFrom (Bounds bounds, Camera camera) {
@@ -221,9 +227,6 @@ public class Map : MonoBehaviour {
         return GeometryUtility.TestPlanesAABB (planes, bounds);
     }    
     
-    Vector3 OriginFromCoord (Vector3Int coord) {
-        return new Vector3 (coord.x * Chunk.size.width, coord.y * Chunk.size.height, coord.z * Chunk.size.width);
-    }
 
     /* Create/find chunk holder object for organizing chunks under in the hierarchy */
     void CreateChunkHolder () {        
@@ -255,39 +258,63 @@ public class Map : MonoBehaviour {
     void OnDrawGizmos () {
         if (Application.isPlaying) {
             var chunks = existingChunks.Values;            
-            foreach (var chunk in chunks) {                
+            foreach (var chunk in chunks) {
+                // chunks            
                 if (showBoundsGizmo) {
-                    Gizmos.color = boundsGizmoCol;
+                    if (chunk.HasMesh())
+                        Gizmos.color = generatedChunksGizmoCol;
+                    else
+                        Gizmos.color = chunksGizmoCol;
                     Gizmos.DrawWireCube (OriginFromCoord (chunk.coord) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
                 }
-                if (showCellGizmo) {
-                    Gizmos.color = boundsCellCol;
+
+                // surface blocks for player chunk
+                if (showBlocksGizmo && chunk.coord == viewerCoord) {
                     Vector3 center = OriginFromCoord (chunk.coord);
-                    Vector3 size = new Vector3(0.1f, 0.1f, 0.1f);
+                    Vector3 size = Vector3.one * 1;
                     for (int x = 0; x < Chunk.size.width; x++)
                         for (int z = 0; z < Chunk.size.width; z++)
                             for (int y = 0; y < Chunk.size.height; y++)
                                 {
                                     if (chunk.blocks[z,y,x] < 255 && chunk.blocks[z,y,x] > 0) {
                                     Vector3 offset = new Vector3(x, y, z);
-                                    Gizmos.color = new Color(boundsCellCol.r, boundsCellCol.g, boundsCellCol.b, chunk.blocks[z,y,x] / 255f);
+                                    size = Vector3.up * (chunk.blocks[z, y, x]/255f);
+                                    Gizmos.color = new Color(0, 1, 0, 1);                                    
+                                    Gizmos.DrawLine(center+offset, center+offset + size);
+
+                                    offset = new Vector3(x, y + chunk.blocks[z, y, x]/(255f), z);
+                                    size = Vector3.up;
+                                    Gizmos.color = new Color(1, 0, 0, 1);
+                                    Gizmos.DrawLine(center+offset, center+offset + size);
+
+                                    offset = new Vector3(x, y, z);
+                                    size = Vector3.one * .1f;
+                                    Gizmos.color = new Color(0, 0, 1, .5f);
                                     Gizmos.DrawWireCube(center + offset, size);
+                                    
                                     }
                                 }
                 }
             }
+
+            // world bounds
             if (showBoundsGizmo) {                
-                Gizmos.color = Color.red;
+                Gizmos.color = Color.red; // currently generated chunk
                 Gizmos.DrawWireCube (OriginFromCoord (generationGizmo) + Vector3.one*(Chunk.size.width)/2f, Vector3.one * Chunk.size.width);
+                
                 Gizmos.color = Color.green;
-                Vector3 worldOrigin = OriginFromCoord (viewerCoord - new Vector3Int(viewDistance, -1, viewDistance));
-                Vector3 worldSize = new Vector3(Chunk.size.width * (2*viewDistance+1), Chunk.size.height, Chunk.size.width * (2*viewDistance+1));
+                Vector3 worldOrigin = OriginFromCoord(viewerCoord - new Vector3Int(viewDistance, -1, viewDistance));
+                Vector3 worldSize = new Vector3(Chunk.size.width * (2*viewDistance+1), 0, Chunk.size.width * (2*viewDistance+1));
                 Gizmos.DrawLine(worldOrigin, worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0));
                 Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0), worldOrigin + worldSize);
                 Gizmos.DrawLine(worldOrigin + worldSize, worldOrigin + worldSize - new Vector3(0, 0, worldSize.z));
                 Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(0, 0, worldSize.z), worldOrigin);
             }
         }
+    }
+
+    Vector3 OriginFromCoord (Vector3Int coord) {
+        return new Vector3 (coord.x * Chunk.size.width, coord.y * Chunk.size.height, coord.z * Chunk.size.width);
     }
 }
 
