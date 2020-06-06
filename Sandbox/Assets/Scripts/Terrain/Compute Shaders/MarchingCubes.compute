@@ -4,9 +4,9 @@
 static const int numThreads = 8;
 
 struct Triangle {
-    float3 vertexC;
-    float3 vertexB;
     float3 vertexA;
+    float3 vertexB;
+    float3 vertexC;
 };
 
 RWStructuredBuffer<uint> points;
@@ -125,9 +125,9 @@ void CubeToTris (uint cubeCorners[8], uint3 index)
         }
 
         Triangle tri;
-        tri.vertexA = val[2];
+        tri.vertexA = val[0];
         tri.vertexB = val[1];
-        tri.vertexC = val[0];
+        tri.vertexC = val[2];
 
         triangles.Append(tri);
     }    
