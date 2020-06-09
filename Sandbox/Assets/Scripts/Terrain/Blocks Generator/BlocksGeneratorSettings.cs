@@ -1,6 +1,4 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
 
 [CreateAssetMenu()]
 public class BlocksGeneratorSettings : ScriptableObject
@@ -8,8 +6,9 @@ public class BlocksGeneratorSettings : ScriptableObject
     [Header("HeightMap Settings")]
     [Range(0, 32)]
     public float baseHeight = 1f;
-    public HeightMapOptions UsedHeightMap; 
-    
+    public HeightMapOptions UsedHeightMap;
+
+    //const float min = 0, max = 1;
     [Space]
     [Range(0, 1)]
     public float flatTiltX;
@@ -22,8 +21,9 @@ public class BlocksGeneratorSettings : ScriptableObject
     [Space]
     public float perlinScale = Chunk.size.height;
     [Range(.005f, .1f)]
+    //[Range(min, max)]
     public float perlinFrequency = 0.025f;
-    public Vector2 perlinOffset = new Vector2(0, 0);
+    public Vector2 perlinOffset = new Vector2(0, 0);      
 }
 
 public enum HeightMapOptions

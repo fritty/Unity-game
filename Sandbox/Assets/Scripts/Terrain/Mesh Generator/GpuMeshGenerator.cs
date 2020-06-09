@@ -8,7 +8,7 @@ public class GpuMeshGenerator : IMeshGenerator
 
     Queue<Vector3Int> requestedCoords = new Queue<Vector3Int>();
     Action<GeneratedDataInfo<MeshData>> dataCallback;
-    ProceduralTerrain terrain;
+    ProTerra terrain;
 
     ComputeBuffer triangleBuffer;
     ComputeBuffer pointsBuffer;
@@ -16,7 +16,7 @@ public class GpuMeshGenerator : IMeshGenerator
     ComputeBuffer edgeBuffer;  
     
 
-    public GpuMeshGenerator(Action<GeneratedDataInfo<MeshData>> dataCallback, ProceduralTerrain terrain, MeshGeneratorSettings meshGeneratorSettings)
+    public GpuMeshGenerator(Action<GeneratedDataInfo<MeshData>> dataCallback, ProTerra terrain, MeshGeneratorSettings meshGeneratorSettings)
     {
         this.dataCallback = dataCallback;
         this.terrain = terrain;
@@ -155,7 +155,7 @@ public class GpuMeshGenerator : IMeshGenerator
         Settings.marchShader.SetBuffer(kernelHandle, "triangles", triangleBuffer);
         Settings.marchShader.SetInt("Width", Chunk.size.width);
         Settings.marchShader.SetInt("Height", Chunk.size.height);
-        //marchShader.SetVector ("Origin", OriginFromCoord(coord));
+        //marchShader.SetVector ("Origin", ChunkOriginFromCoord(coord));
 
         Settings.marchShader.Dispatch(kernelHandle, (int)threadGroupsX, (int)threadGroupsY, (int)threadGroupsZ);
     }

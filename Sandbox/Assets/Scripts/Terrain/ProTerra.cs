@@ -2,10 +2,12 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-/* Creates and manages chunks */
+/* Procedural Terrain. Creates and manages chunks */
+[RequireComponent(typeof(DiggingListener))]
 [DisallowMultipleComponent]
-public class ProceduralTerrain : MonoBehaviour
-{
+public class ProTerra : MonoBehaviour
+{      
+    public static ProTerra Instance;
 
     [Header("General Settings")]
     public int viewDistance = 10;
@@ -30,9 +32,11 @@ public class ProceduralTerrain : MonoBehaviour
     [HideInInspector]
     public bool meshGeneratorSettingsFoldout;
 
-    // generators
+    // components
     BlocksGenerator blocksGenerator;
     IMeshGenerator meshGenerator;
+
+    DiggingListener diggingListener; 
     //
     
     public Vector3Int viewerCoord { get; private set; }
@@ -40,13 +44,18 @@ public class ProceduralTerrain : MonoBehaviour
     // structures for managing chunks 
     public Dictionary<Vector3Int, Chunk> existingChunks { get; private set; }
     Queue<Chunk> chunksForRecycling;
-
-    GameObject chunkHolder;
-    const string chunkHolderName = "Chunks Holder";
     //
-    
-    Vector3Int generationGizmo;
+                  
 
+    void Awake()
+    {
+        Initialize();        
+    }
+
+    void Start()
+    {
+        CreateChunks();       
+    }
 
     void FixedUpdate()
     {
@@ -59,28 +68,79 @@ public class ProceduralTerrain : MonoBehaviour
         meshGenerator.ManageRequests();
     }
 
-    void Awake()
-    {
-        SetVariables();
-        CreateChunkHolder();           
-    }      
-
-    void Start()
-    {
-        CreateChunks();
-    }
 
     /* Interface */
 
-    public byte BlockFromGlobalPosition(Vector3Int position)
+    // Tries to modyfy block. If successfull, requests mesh and returns true
+    public bool ModifyBlock (Vector3Int chunkCoord, Vector3Int localPosition, int value)
     {
         Chunk chunk;
-        if (existingChunks.TryGetValue(new Vector3Int(position.x / Chunk.size.width, position.y / Chunk.size.height, position.z / Chunk.size.width), out chunk))
-            return chunk.blocks[position.x % Chunk.size.width, position.y % Chunk.size.height, position.z % Chunk.size.width];
-        else
-            return 0;
+        if (existingChunks.TryGetValue(chunkCoord, out chunk))
+        {
+            if (chunk.ModifyBlock(localPosition, value))
+            {
+                MarkForMeshGeneration(chunk);
+
+                for (int i = 1; i < 8; i++)
+                {
+                    int x = i & 1;
+                    int y = (i & 2) >> 1;
+                    int z = (i & 4) >> 2;
+
+                    if ((localPosition.x * x == 0) && (localPosition.y * y == 0) && (localPosition.z * z == 0) && existingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
+                        MarkForMeshGeneration(chunk);
+                }
+                return true;  
+            }                 
+        } 
+
+        return false;
     }
 
+
+   
+    /* Static methods */
+
+    public static Vector3Int WorldPositionToChunkCoord(Vector3Int position)
+    {
+        return new Vector3Int(Mathf.FloorToInt((float)position.x / Chunk.size.width), Mathf.FloorToInt((float)position.y / Chunk.size.height), Mathf.FloorToInt((float)position.z / Chunk.size.width));
+    }
+
+    public static Vector3Int WorldPositionToChunkCoord(Vector3 position)
+    {
+        return new Vector3Int(Mathf.FloorToInt(position.x / Chunk.size.width), Mathf.FloorToInt(position.y / Chunk.size.height), Mathf.FloorToInt(position.z / Chunk.size.width));
+    }
+
+    public static Vector3Int WorldPositionToChunkPosition(Vector3Int position)
+    {
+        Vector3Int result = new Vector3Int(position.x % Chunk.size.width, position.y % Chunk.size.height, position.z % Chunk.size.width);
+        if (result.x < 0)
+            result.x += Chunk.size.width;
+        if (result.y < 0)
+            result.y += Chunk.size.height;
+        if (result.z < 0)
+            result.z += Chunk.size.width;
+
+        return result;
+    }
+
+    public static Vector3Int WorldPositionToChunkPosition(Vector3 position)
+    {
+        Vector3Int result = new Vector3Int(Mathf.FloorToInt(position.x) % Chunk.size.width, Mathf.FloorToInt(position.y) % Chunk.size.height, Mathf.FloorToInt(position.z) % Chunk.size.width);
+        if (result.x < 0)
+            result.x += Chunk.size.width;
+        if (result.y < 0)
+            result.y += Chunk.size.height;
+        if (result.z < 0)
+            result.z += Chunk.size.width;
+
+        return result;
+    }
+
+    public static Vector3Int ChunkOriginFromCoord(Vector3Int chunkCoord)
+    {
+        return new Vector3Int(chunkCoord.x * Chunk.size.width, chunkCoord.y * Chunk.size.height, chunkCoord.z * Chunk.size.width);
+    }
 
     ///////////////////////
     /* Chunks management */
@@ -97,7 +157,7 @@ public class ProceduralTerrain : MonoBehaviour
         Vector3Int currentCoord = new Vector3Int(Mathf.FloorToInt(viewer.position.x / Chunk.size.width), 0, Mathf.FloorToInt(viewer.position.z / Chunk.size.width));
 
         // Go through world bound difference and delete/mark for generation
-        if (viewerCoord != currentCoord) // only if coord is changed
+        if (viewerCoord != currentCoord) // only if viewer coord is changed
         { 
             Vector3Int previousCoord = viewerCoord;
 
@@ -179,6 +239,7 @@ public class ProceduralTerrain : MonoBehaviour
         }
     }
 
+    // Recieves map data from generator, assignes it for recycled chunk and triggers mesh generation
     void OnMapDataReceived(GeneratedDataInfo<MapData> mapData)
     {
         if (Mathf.Abs(mapData.coord.x - viewerCoord.x) <= viewDistance &&
@@ -191,20 +252,28 @@ public class ProceduralTerrain : MonoBehaviour
             existingChunks.Add(mapData.coord, chunk);
 
             TriggerMeshGeneration(mapData.coord);
-        }
-        generationGizmo = mapData.coord;
+        } 
     }       
 
+    // Recieves mesh from generator and requests another one if chunk is dirty
     void OnMeshDataReceived(GeneratedDataInfo<MeshData> meshData)
     {
         Chunk chunk;
         if (existingChunks.TryGetValue(meshData.coord, out chunk))
         {
             chunk.SetMesh(meshData.data);
-        }
-        generationGizmo = meshData.coord;
+
+            if (chunk.isDirty)
+            {
+                RequestMesh(chunk);
+                chunk.SetDirty(false);
+            }
+            else
+                chunk.WaitForMesh(false);
+        }    
     }
 
+    // Requests meshes for all adjacent chunks
     void TriggerMeshGeneration(Vector3Int coord)
     {
         Chunk chunk;
@@ -214,13 +283,26 @@ public class ProceduralTerrain : MonoBehaviour
                 for (int z = -1; z <= 1; z++)
                 {
                     if (existingChunks.TryGetValue(new Vector3Int(coord.x + x, coord.y + y, coord.z + z), out chunk))
-                        TryToGenerateMesh(chunk);
+                        RequestMesh(chunk);
                 }
     }
 
-    void TryToGenerateMesh(Chunk chunk)
+    // Requests mesh or sets chunk dirty if already requested 
+    private void MarkForMeshGeneration(Chunk chunk)
     {
-        if (chunk.hasMesh)
+        if (chunk.isWaitingMesh)
+            chunk.SetDirty(true);
+        else
+        {
+            chunk.WaitForMesh(true);
+            RequestMesh(chunk);
+        }
+    }
+
+    // Checks if mesh is needed and can be generated before requesting it
+    void RequestMesh(Chunk chunk)
+    {
+        if (chunk.hasMesh && !chunk.isWaitingMesh)
             return;
 
         bool generate = true;
@@ -241,9 +323,26 @@ public class ProceduralTerrain : MonoBehaviour
     /* Initialization */
     ////////////////////
 
-    void SetVariables()
+    void Initialize()
     {
-        generationGizmo = new Vector3Int(0, 0, 0);
+        CreateSingleton();
+        SetVariables();       
+    }
+
+    void CreateSingleton ()
+    {
+        if (Instance == null)
+        {
+            Instance = this;
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    void SetVariables()
+    {   
         viewerCoord = new Vector3Int(0, 0, 0);
 
         existingChunks = new Dictionary<Vector3Int, Chunk>();
@@ -255,29 +354,13 @@ public class ProceduralTerrain : MonoBehaviour
         else
             meshGenerator = new CpuMeshGenerator(OnMeshDataReceived, this, meshGeneratorSettings);
 
+        diggingListener = GetComponent<DiggingListener>();
+
         transform.position = Vector3.zero;
 
         if (viewer == null)
             viewer = Camera.main.transform;
-    }
-
-    /* Create/find chunk holder object for organizing chunks under in the hierarchy */
-    void CreateChunkHolder()
-    {
-        if (chunkHolder == null)
-        {
-            if (GameObject.Find(chunkHolderName))
-            {
-                chunkHolder = GameObject.Find(chunkHolderName);
-                chunkHolder.transform.SetParent(transform);
-            }
-            else
-            {
-                chunkHolder = new GameObject(chunkHolderName);
-                chunkHolder.transform.SetParent(transform);
-            }
-        }
-    }    
+    }   
 
     /* Initial generation */
     void CreateChunks ()
@@ -317,7 +400,8 @@ public class ProceduralTerrain : MonoBehaviour
     Chunk CreateChunk ()
     {
         GameObject chunk = new GameObject();
-        chunk.transform.parent = chunkHolder.transform;
+        chunk.transform.parent = transform;
+        chunk.tag = "Chunk";
         Chunk newChunk = chunk.AddComponent<Chunk>();
         newChunk.Create(meshGeneratorSettings.generateColliders, meshGeneratorSettings.material);
         return newChunk;
@@ -327,28 +411,22 @@ public class ProceduralTerrain : MonoBehaviour
     {
         if (Application.isPlaying)
         {
-            var chunks = existingChunks.Values;
-            foreach (var chunk in chunks)
+            if (showBoundsGizmo)
             {
-                // chunks            
-                if (showBoundsGizmo)
+                var chunks = existingChunks.Values;
+                foreach (var chunk in chunks)
                 {
+                    // chunks 
                     if (chunk.hasMesh)
                         Gizmos.color = generatedChunksGizmoCol;
                     else
                         Gizmos.color = chunksGizmoCol;
-                    Gizmos.DrawWireCube(OriginFromCoord(chunk.coord) + Vector3.one * (Chunk.size.width) / 2f, Vector3.one * Chunk.size.width);
+                    Gizmos.DrawWireCube(ChunkOriginFromCoord(chunk.coord) + Vector3.one * (Chunk.size.width) / 2f, Vector3.one * Chunk.size.width); 
                 }
-            }
 
-            // world bounds
-            if (showBoundsGizmo)
-            {
-                Gizmos.color = Color.red; // currently generated chunk
-                Gizmos.DrawWireCube(OriginFromCoord(generationGizmo) + Vector3.one * (Chunk.size.width) / 2f, Vector3.one * Chunk.size.width);
-
+                // world bounds 
                 Gizmos.color = Color.green;
-                Vector3 worldOrigin = OriginFromCoord(viewerCoord - new Vector3Int(viewDistance, -1, viewDistance));
+                Vector3 worldOrigin = ChunkOriginFromCoord(viewerCoord - new Vector3Int(viewDistance, -1, viewDistance));
                 Vector3 worldSize = new Vector3(Chunk.size.width * (2 * viewDistance + 1), 0, Chunk.size.width * (2 * viewDistance + 1));
                 Gizmos.DrawLine(worldOrigin, worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0));
                 Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0), worldOrigin + worldSize);
@@ -356,12 +434,7 @@ public class ProceduralTerrain : MonoBehaviour
                 Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(0, 0, worldSize.z), worldOrigin);
             }
         }
-    }
-
-    Vector3 OriginFromCoord(Vector3Int coord)
-    {
-        return new Vector3(coord.x * Chunk.size.width, coord.y * Chunk.size.height, coord.z * Chunk.size.width);
-    }
+    }  
 
     private void OnDestroy()
     {

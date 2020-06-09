@@ -11,7 +11,7 @@ public class CpuMeshGenerator : IMeshGenerator
 
     Queue<Vector3Int> requestedCoords = new Queue<Vector3Int>();
     Action<GeneratedDataInfo<MeshData>> dataCallback;
-    ProceduralTerrain terrain;
+    ProTerra terrain;
 
     static int maxJobsPerUpdate = 4;
 
@@ -26,7 +26,7 @@ public class CpuMeshGenerator : IMeshGenerator
     Vector3Int[] jobsAssignedCoords;
 
 
-    public CpuMeshGenerator(Action<GeneratedDataInfo<MeshData>> dataCallback, ProceduralTerrain terrain, MeshGeneratorSettings meshGeneratorSettings)
+    public CpuMeshGenerator(Action<GeneratedDataInfo<MeshData>> dataCallback, ProTerra terrain, MeshGeneratorSettings meshGeneratorSettings)
     {
         this.dataCallback = dataCallback;
         this.terrain = terrain;
@@ -37,7 +37,7 @@ public class CpuMeshGenerator : IMeshGenerator
     public void Destroy()
     {
         ReleaseBuffers();
-    }
+    } 
 
     public void RequestData(Vector3Int coord)
     {

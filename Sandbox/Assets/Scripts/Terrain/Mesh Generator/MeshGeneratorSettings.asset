@@ -9,12 +9,12 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 0}
-  m_Name: Mesh Generator Settings
-  m_EditorClassIdentifier: Assembly-CSharp::MeshGeneratorSettings
+  m_Script: {fileID: 11500000, guid: 9d53a4ba03f1ebb4a816fdd1f6f65b9b, type: 3}
+  m_Name: MeshGeneratorSettings
+  m_EditorClassIdentifier: 
   material: {fileID: 2100000, guid: 13b363d7398821740b24835aa75f65ca, type: 2}
   generateColliders: 1
   useGpu: 0
-  marchShader: {fileID: 7200000, guid: eb5e3a4d60e5d6447a6d64ad0ca565db, type: 3}
+  marchShader: {fileID: 0}
   targetFps: 30
   log: 0

@@ -6,6 +6,7 @@ using Unity.Mathematics;
 // Jobs for CPU mesh generation
 
 [BurstCompile]
+// parallel job for calculating vertex values
 public struct FillVerticiesArrayJob : IJobParallelFor
 {   
     [ReadOnly]
@@ -79,6 +80,9 @@ public struct FillVerticiesArrayJob : IJobParallelFor
             if (offset_B > 0)
                 offset_A = offset_B;
 
+            //if (offset_A == 255)
+            //    offset_A = 254;
+
             return (byte)(255f * (corner / (255f - offset_A + corner)));
         }
 
@@ -87,6 +91,7 @@ public struct FillVerticiesArrayJob : IJobParallelFor
 }
 
 [BurstCompile]
+// normal job for forming mesh data
 public struct CollapseIndiciesJob : IJob
 {  
     [ReadOnly]
@@ -172,13 +177,14 @@ public struct CollapseIndiciesJob : IJob
 
     float3 VertexVector (int2 vertId)
     {       
-        float3 delta = new float3((vertId.y == 0) ? verticiesExpanded[vertId.x].x / 255f : 0f,
-                                  (vertId.y == 1) ? verticiesExpanded[vertId.x].y / 255f : 0f,
-                                  (vertId.y == 2) ? verticiesExpanded[vertId.x].z / 255f : 0f);
+        float3 delta = new float3((vertId.y == 0) ? verticiesExpanded[vertId.x].x * 4f / 1021f : 0f, // ! shrinking cube by a factor of ~1/1000 to make sure vertices preserve edge information
+                                  (vertId.y == 1) ? verticiesExpanded[vertId.x].y * 4f / 1021f : 0f,
+                                  (vertId.y == 2) ? verticiesExpanded[vertId.x].z * 4f / 1021f : 0f);
+        //delta = delta * 4f / 1021f; 
         
         int3 vertCoord = verticiesExpanded.IdToCoord(vertId.x);
 
-        return new float3((float)vertCoord.x + delta.x, (float)vertCoord.y + delta.y, (float)vertCoord.z + delta.z);
+        return new float3(vertCoord.x + delta.x, vertCoord.y + delta.y, vertCoord.z + delta.z);
     }
 }
 

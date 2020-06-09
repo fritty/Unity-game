@@ -9,15 +9,15 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 0}
-  m_Name: Blocks Generator Settings
-  m_EditorClassIdentifier: Assembly-CSharp::BlocksGeneratorSettings
-  baseHeight: 1
+  m_Script: {fileID: 11500000, guid: f94cb066b68481443823aecb0dc09aaf, type: 3}
+  m_Name: BlocksGeneratorSettings
+  m_EditorClassIdentifier: 
+  baseHeight: 2
   UsedHeightMap: 2
-  flatTiltX: 0.2
-  flatTiltZ: 0.4
+  flatTiltX: 0
+  flatTiltZ: 0
   sinScale: 32
   sinFrequency: 0.025
   perlinScale: 32
   perlinFrequency: 0.025
-  perlinOffset: {x: 1000, y: 1000}
+  perlinOffset: {x: 500, y: 500}

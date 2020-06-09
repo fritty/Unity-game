@@ -15,11 +15,11 @@ public class BlocksGenerator
     Queue<Vector3Int> requestedCoords = new Queue<Vector3Int>();
 
     Action<GeneratedDataInfo<MapData>> dataCallback;
-    ProceduralTerrain terrain;
+    ProTerra terrain;
 
     HeightFunction heightFunction;
     
-    public BlocksGenerator (BlocksGeneratorSettings blocksGeneratorSettings, Action<GeneratedDataInfo<MapData>> dataCallback, ProceduralTerrain terrain)
+    public BlocksGenerator (BlocksGeneratorSettings blocksGeneratorSettings, Action<GeneratedDataInfo<MapData>> dataCallback, ProTerra terrain)
     {
         Settings = blocksGeneratorSettings;
         this.dataCallback = dataCallback;
@@ -83,7 +83,7 @@ public class BlocksGenerator
         dataCallback = callback;
     }
 
-    public void SetMapReference(ProceduralTerrain terrain)
+    public void SetMapReference(ProTerra terrain)
     {
         this.terrain = terrain;
     }
@@ -106,7 +106,7 @@ public class BlocksGenerator
 
     MapData Generate(Vector3Int coord)
     {
-        Vector3 origin = OriginFromCoord(coord);
+        Vector3 origin = ChunkOriginFromCoord(coord);
         byte[,,] blocks = ApplyHeightMap(CreateHeightMap(heightFunction, origin));
 
         return new MapData(blocks);
@@ -228,7 +228,7 @@ public class BlocksGenerator
             return 255;
     }    
 
-    Vector3 OriginFromCoord(Vector3Int coord)
+    Vector3 ChunkOriginFromCoord(Vector3Int coord)
     {
         return new Vector3(coord.x * Chunk.size.width, coord.y * Chunk.size.height, coord.z * Chunk.size.width);
     }
@@ -243,10 +243,8 @@ public struct MapData
     {
         this.blocks = blocks;
     }
-}
+} 
 
-
-// auxiliary types
 struct HeightMap
 {
     public float[,] array;
@@ -257,6 +255,6 @@ struct HeightMap
         heightMap.array = new float[Chunk.size.width, Chunk.size.width];
         return heightMap;
     }
-}
+}  
 
 delegate float HeightFunction(int x, int z, Vector3 origin);

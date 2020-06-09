@@ -4,12 +4,12 @@ using Unity.Collections;
 public class Chunk : MonoBehaviour {
     public struct size
     {
-        static public int width = 32;
-        static public int height = 32;
+        public const int width = 32;
+        public const int height = 32;
     }
 
     [SerializeField]
-    bool showBlocksGizmo = false;
+    bool showSurfaceBlocks = false;
 
     [HideInInspector]
     public Vector3Int coord { get; private set; }
@@ -17,6 +17,10 @@ public class Chunk : MonoBehaviour {
     public byte[,,] blocks { get; private set; }
     [HideInInspector]
     public bool hasMesh { get; private set; }
+    [HideInInspector]
+    public bool isDirty { get; private set; }
+    [HideInInspector]
+    public bool isWaitingMesh { get; private set; }
 
 
     Mesh mesh;
@@ -53,8 +57,9 @@ public class Chunk : MonoBehaviour {
         {
             DestroyImmediate(meshCollider);
         }
-    }
-    
+
+        isDirty = false;
+    }  
 
     public void SetCoord (Vector3Int coord) {        
         this.coord = coord;
@@ -64,24 +69,44 @@ public class Chunk : MonoBehaviour {
             mesh.Clear();
             hasMesh = false;
         }
-        transform.position = OriginFromCoord(coord);
+        transform.position = ProTerra.ChunkOriginFromCoord(coord);
     }
 
     public void SetBlocks (byte[,,] blocks) {
-        this.blocks = blocks;
-
-        if (hasMesh)
-        {
-            mesh.Clear();
-            hasMesh = false;
-        }
+        if (blocks != null)
+            this.blocks = blocks;
     }
 
-    public void SetMesh (MeshData meshData) {         
+    public bool ModifyBlock (Vector3Int localPosition, int value)
+    {
+        if (blocks != null)
+        {
+            byte newValue = (byte)Mathf.Clamp(blocks[localPosition.z, localPosition.y, localPosition.x] + value, 0, 255);
+            if (blocks[localPosition.z, localPosition.y, localPosition.x] != newValue)
+            {
+                blocks[localPosition.z, localPosition.y, localPosition.x] = newValue;
+                return true;
+            }
+        }
 
-        mesh = meshFilter.sharedMesh = meshData.CreateMesh();
-        
-        mesh.Optimize();        
+        return false;
+    }
+
+    public void SetMesh (MeshData meshData) {
+
+        if (mesh == null)
+        {
+            mesh = meshFilter.sharedMesh = meshData.CreateMesh();            
+        }
+        else
+        {
+            mesh.Clear();
+            mesh.vertices = meshData.vertices;
+            mesh.triangles = meshData.triangles;
+            mesh.RecalculateNormals();
+        }
+
+        mesh.Optimize();
 
         hasMesh = true;
 
@@ -91,11 +116,16 @@ public class Chunk : MonoBehaviour {
             meshCollider.enabled = false;
             meshCollider.enabled = true;
         }        
-    } 
-
-    Vector3 OriginFromCoord(Vector3Int coord)
+    }
+    
+    public void SetDirty (bool dirtyState)
     {
-        return new Vector3(coord.x * Chunk.size.width, coord.y * Chunk.size.height, coord.z * Chunk.size.width);
+        isDirty = dirtyState;
+    }
+
+    public void WaitForMesh(bool wait)
+    {
+        isWaitingMesh = wait;
     }
 
     public void DestroyOrDisable () {
@@ -110,33 +140,57 @@ public class Chunk : MonoBehaviour {
     private void OnDrawGizmos()
     {
         // surface blocks for player chunk
-        if (showBlocksGizmo)
+        if (showSurfaceBlocks)
         {
-            Vector3 center = OriginFromCoord(coord);
-            Vector3 size = Vector3.one * 1;
+            Vector3 center = ProTerra.ChunkOriginFromCoord(coord);
+            float size;
             for (int x = 0; x < Chunk.size.width; x++)
                 for (int z = 0; z < Chunk.size.width; z++)
-                    for (int y = 0; y < Chunk.size.height; y++)
+                {
+                    bool hadBlock = blocks[z, 0, x] > 0;
+                    for (int y = 1; y < Chunk.size.height; y++)
                     {
-                        if (blocks[z, y, x] < 255 && blocks[z, y, x] > 0)
-                        {
-                            Vector3 offset = new Vector3(x, y, z);
-                            size = Vector3.up * (blocks[z, y, x] / 255f);
-                            Gizmos.color = new Color(0, 1, 0, 1);
-                            Gizmos.DrawLine(center + offset, center + offset + size);
+                        bool hasBlock = blocks[z, y, x] > 0;
 
-                            offset = new Vector3(x, y + blocks[z, y, x] / (255f), z);
-                            size = Vector3.up;
-                            Gizmos.color = new Color(1, 0, 0, 1);
-                            Gizmos.DrawLine(center + offset, center + offset + size);
+                        if (hadBlock != hasBlock)
+                        {                               
+                            int renderY = y + (hadBlock ? -1 : 0);
 
-                            offset = new Vector3(x, y, z);
-                            size = Vector3.one * .1f;
+                            Vector3 offset = (new Vector3(x, renderY, z) + center);
+                            size = (blocks[z, renderY, x] / 255f);// - 0.01f;
+                            Gizmos.color = Color.green;
+
+                            //Gizmos.DrawLine(offset + Vector3.up, offset + Vector3.right);
+
+                            Gizmos.DrawLine(offset + Vector3.up * size, offset + Vector3.right * size);
+                            Gizmos.DrawLine(offset + Vector3.right * size, offset - Vector3.up * size);
+                            Gizmos.DrawLine(offset - Vector3.up * size, offset - Vector3.right * size);
+                            Gizmos.DrawLine(offset - Vector3.right * size, offset + Vector3.up * size);
+
+                            Gizmos.DrawLine(offset + Vector3.up * size, offset + Vector3.forward * size);
+                            Gizmos.DrawLine(offset + Vector3.forward * size, offset - Vector3.up * size);
+                            Gizmos.DrawLine(offset - Vector3.up * size, offset - Vector3.forward * size);
+                            Gizmos.DrawLine(offset - Vector3.forward * size, offset + Vector3.up * size);
+
+                            size = .1f;
                             Gizmos.color = new Color(0, 0, 1, .5f);
-                            Gizmos.DrawWireCube(center + offset, size);
+                            Gizmos.DrawWireCube(offset, Vector3.one * size);
 
+                            //offset = new Vector3(x, renderY + blocks[z, renderY, x] / (255f), z);
+                            ////size = Vector3.up;
+                            //Gizmos.color = Color.red;
+                            //Gizmos.DrawLine(offset, offset + Vector3.up);
+
+                            hadBlock = hasBlock;
                         }
                     }
+                }
+        }
+
+        if (isWaitingMesh)
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawWireCube(ProTerra.ChunkOriginFromCoord(coord) + Vector3.one * (Chunk.size.width) / 2f, Vector3.one * Chunk.size.width * 1.1f);
         }
     }
 }
