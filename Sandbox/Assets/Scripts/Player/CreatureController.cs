@@ -21,20 +21,15 @@ public class CreatureController : MonoBehaviour
     private void Awake()
     {
         input = GetComponent<ICreatureInput>();
-        body = GetComponent<Rigidbody>(); 
-    }          
-
-    private void Start()
-    {
+        body = GetComponent<Rigidbody>();
         lookDirection = Vector3.forward;
-
+        transform.position = startingPosition; 
         if (body != null)
-        {
-            body.position = Vector3.up * 60;
+        {   
             body.rotation = Quaternion.LookRotation(lookDirection);
             body.freezeRotation = true;
         }
-    }
+    }   
 
     private void OnValidate()
     {

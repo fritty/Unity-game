@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f94cb066b68481443823aecb0dc09aaf, type: 3}
   m_Name: BlocksGeneratorSettings
   m_EditorClassIdentifier: 
-  baseHeight: 2
+  baseHeight: 3
   UsedHeightMap: 2
   flatTiltX: 0
   flatTiltZ: 0

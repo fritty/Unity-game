@@ -3,7 +3,7 @@ using Unity.Collections;
 using Unity.Burst;
 using Unity.Mathematics;
 
-// Jobs for CPU mesh generation
+// Jobs and structures for CPU mesh generation
 
 [BurstCompile]
 // parallel job for calculating vertex values
@@ -72,18 +72,14 @@ public struct FillVerticiesArrayJob : IJobParallelFor
 
         int3 directionOffset = !math.abs(direction).Equals(direction) ? new int3(0, 0, 0) : direction;
 
-        byte offset_A = blocks[vecId + directionOffset + offset];
-        byte offset_B = blocks[vecId + directionOffset - offset];              
+        byte offset_P = blocks[vecId + directionOffset + offset];
+        byte offset_N = blocks[vecId + directionOffset - offset];
+        byte offset_2P = blocks[vecId + directionOffset + offset * 2];
+        byte offset_2N = blocks[vecId + directionOffset - offset * 2];
 
-        if (offset_A > 0 ^ offset_B > 0) // considered inclined only if one side corner is present
+        if (InclineCondition.Check(offset_N, offset_P, offset_2N, offset_2P)) // incline condition
         {
-            if (offset_B > 0)
-                offset_A = offset_B;
-
-            //if (offset_A == 255)
-            //    offset_A = 254;
-
-            return (byte)(255f * (corner / (255f - offset_A + corner)));
+            return (byte)InclineCondition.Evaluate(offset_N, offset_P, corner);
         }
 
         return 0;
@@ -104,41 +100,91 @@ public struct CollapseIndiciesJob : IJob
     [WriteOnly]
     public NativeQueue<float3> verticies;
     [WriteOnly]
-    public NativeQueue<int> indicies;  
+    public NativeQueue<int> indicies; 
 
 
     public void Execute ()
     {
         // array for storing corresponding indicies
-        NativeArray<int> mapping = new NativeArray<int>(verticiesExpanded.length * 3, Allocator.Temp, NativeArrayOptions.ClearMemory);
-
-        int mappingValue = 1;
-
+        NativeArray<int> mapping = new NativeArray<int>(verticiesExpanded.length * 3, Allocator.Temp, NativeArrayOptions.ClearMemory); 
+        int mappingValue = 1; 
 
         for (int cubeIndex = 0; cubeIndex < blocks.chunkWidth * blocks.chunkWidth * blocks.chunkHeight; cubeIndex++)
         {
             int3 cubeCoord = blocks.ChunkBlockIdToCoord(cubeIndex);   
-            int cubeConfiguration = CubeConfigurationFromCoord(cubeCoord) * marchTables.maxTriIndex;
+            byte cubeConfiguration = CubeConfigurationFromCoord(cubeCoord);
 
-            for (int triIndex = 0; marchTables.triangulation[cubeConfiguration + triIndex] != 255; triIndex += 3)
-            {      
-                for (int j = 0; j < 3; j++)
-                {                                                                                                          
-                    int2 vertId = VertexIdFromEdge(marchTables.triangulation[cubeConfiguration + triIndex + j], cubeCoord);
-                    int mappingId = vertId.x * 3 + vertId.y;
+                // exceptions for smooth transitions
+            if (cubeConfiguration == 15 || cubeConfiguration == 51 || cubeConfiguration == 102 || cubeConfiguration == 153 || cubeConfiguration == 204 || cubeConfiguration == 240)
+            {   
+                float3 median_1, median_2;                 
+                int triangulationIndex = cubeConfiguration * marchTables.maxTriIndex;
+                int2 vertId_1 = VertexIdFromEdge(marchTables.triangulation[triangulationIndex + 0], cubeCoord);
+                int2 vertId_2 = VertexIdFromEdge(marchTables.triangulation[triangulationIndex + 1], cubeCoord);
+                int2 vertId_3 = VertexIdFromEdge(marchTables.triangulation[triangulationIndex + 2], cubeCoord);
+                int2 vertId_4 = VertexIdFromEdge(marchTables.triangulation[triangulationIndex + 5], cubeCoord); 
+                float3 vertex_1 = VertexVector(vertId_1);
+                float3 vertex_2 = VertexVector(vertId_2);
+                float3 vertex_3 = VertexVector(vertId_3);
+                float3 vertex_4 = VertexVector(vertId_4);
 
-                    if (mapping[mappingId] == 0)
+                median_1 = (vertex_2 + vertex_3) / 2f;
+                median_2 = (vertex_1 + vertex_4) / 2f;                
+
+                if ((cubeConfiguration == 153 && median_1.x >= median_2.x) ||
+                    (cubeConfiguration == 102 && median_1.x <  median_2.x) ||
+                    (cubeConfiguration == 15  && median_1.y >= median_2.y) ||
+                    (cubeConfiguration == 240 && median_1.y <  median_2.y) ||
+                    (cubeConfiguration == 51  && median_1.z >= median_2.z) ||
+                    (cubeConfiguration == 204 && median_1.z <  median_2.z)) 
+                {
+                    EnqueueResult(vertId_1, vertex_1, ref mappingValue, mapping);
+                    EnqueueResult(vertId_2, vertex_2, ref mappingValue, mapping);
+                    EnqueueResult(vertId_3, vertex_3, ref mappingValue, mapping);
+
+                    EnqueueResult(vertId_3, vertex_3, ref mappingValue, mapping);
+                    EnqueueResult(vertId_2, vertex_2, ref mappingValue, mapping);
+                    EnqueueResult(vertId_4, vertex_4, ref mappingValue, mapping);
+                }
+                else
+                {
+                    EnqueueResult(vertId_1, vertex_1, ref mappingValue, mapping);
+                    EnqueueResult(vertId_2, vertex_2, ref mappingValue, mapping);
+                    EnqueueResult(vertId_4, vertex_4, ref mappingValue, mapping);
+
+                    EnqueueResult(vertId_1, vertex_1, ref mappingValue, mapping);
+                    EnqueueResult(vertId_4, vertex_4, ref mappingValue, mapping);
+                    EnqueueResult(vertId_3, vertex_3, ref mappingValue, mapping);
+                }  
+            }
+            else // other cases
+            {
+                for (int triIndex = 0; marchTables.triangulation[cubeConfiguration * marchTables.maxTriIndex + triIndex] != 255; triIndex += 3)
+                {
+                    for (int j = 0; j < 3; j++)
                     {
-                        mapping[mappingId] = mappingValue++;
-                        verticies.Enqueue(VertexVector(vertId));
-                    }
+                        int2 vertexId = VertexIdFromEdge(marchTables.triangulation[cubeConfiguration * marchTables.maxTriIndex + triIndex + j], cubeCoord);
 
-                    indicies.Enqueue(mapping[mappingId] - 1);
-                }   
+                        EnqueueResult(vertexId, VertexVector(vertexId), ref mappingValue, mapping); 
+                    }
+                }
             } 
         }
 
         mapping.Dispose();
+    }
+
+    void EnqueueResult (int2 vertexId, float3 vertex, ref int mappingValue, NativeArray<int> mapping)
+    {
+        int mappingId = vertexId.x * 3 + vertexId.y;
+
+        if (mapping[mappingId] == 0)
+        {
+            mapping[mappingId] = mappingValue++;
+            verticies.Enqueue(vertex);
+        }
+
+        indicies.Enqueue(mapping[mappingId] - 1);
     }
 
     int2 VertexIdFromEdge (byte edge, int3 cubeCoord)
@@ -177,14 +223,28 @@ public struct CollapseIndiciesJob : IJob
 
     float3 VertexVector (int2 vertId)
     {       
-        float3 delta = new float3((vertId.y == 0) ? verticiesExpanded[vertId.x].x * 4f / 1021f : 0f, // ! shrinking cube by a factor of ~1/1000 to make sure vertices preserve edge information
-                                  (vertId.y == 1) ? verticiesExpanded[vertId.x].y * 4f / 1021f : 0f,
-                                  (vertId.y == 2) ? verticiesExpanded[vertId.x].z * 4f / 1021f : 0f);
-        //delta = delta * 4f / 1021f; 
-        
+        float3 delta = new float3((vertId.y == 0) ? verticiesExpanded[vertId.x].x / 256f : 0f, // ! shrinking cube by a factor of 1/256 to make sure vertices preserve edge information
+                                  (vertId.y == 1) ? verticiesExpanded[vertId.x].y / 256f : 0f,
+                                  (vertId.y == 2) ? verticiesExpanded[vertId.x].z / 256f : 0f); 
         int3 vertCoord = verticiesExpanded.IdToCoord(vertId.x);
-
         return new float3(vertCoord.x + delta.x, vertCoord.y + delta.y, vertCoord.z + delta.z);
+    }
+}
+
+public struct InclineCondition
+{
+    public static bool Check (byte offset_N, byte offset_P, byte offset_2N, byte offset_2P)
+    {
+        bool a = (offset_P != 0) && (offset_N == 0);
+        bool b = (offset_N != 0) && (offset_P == 0);
+
+        return (a || b) && ((offset_2N == 0) || b) && ((offset_2P == 0) || a);
+    }
+
+    public static float Evaluate (byte offset_N, byte offset_P, byte corner)
+    {
+        if (offset_N > 0) return 255f * corner / (255f - offset_N + corner);
+        return 255f * corner / (255f - offset_P + corner);
     }
 }
 
@@ -284,13 +344,15 @@ public struct ChunkMeshBlocks
     public int length { get; }
     public int chunkWidth { get; }
     public int chunkHeight { get; }
+    public const int lowBoundaryOffset = 2;
+    public const int highBoundaryOffset = 3;
 
     public ChunkMeshBlocks(int chunkWidth, int chunkHeight)
     {
         this.chunkWidth = chunkWidth;
-        this.chunkHeight = chunkHeight;
-        width = chunkWidth + 3;
-        height = chunkHeight + 3;
+        this.chunkHeight = chunkHeight; 
+        width = chunkWidth + lowBoundaryOffset + highBoundaryOffset;
+        height = chunkHeight + lowBoundaryOffset + highBoundaryOffset;
         length = width * width * height;
         blocks = new NativeArray<byte>(length, Allocator.Persistent);          
     } 
@@ -318,13 +380,13 @@ public struct ChunkMeshBlocks
     {
         get
         {
-            int id = (coordinate.x + 1) + (coordinate.y + 1) * width + (coordinate.z + 1) * width * height;
+            int id = (coordinate.x + lowBoundaryOffset) + (coordinate.y + lowBoundaryOffset) * width + (coordinate.z + lowBoundaryOffset) * width * height;
             if (id >= length || id < 0) return 0;
             return blocks[id];
         }
         set
         {
-            int id = (coordinate.x + 1) + (coordinate.y + 1) * width + (coordinate.z + 1) * width * height;
+            int id = (coordinate.x + lowBoundaryOffset) + (coordinate.y + lowBoundaryOffset) * width + (coordinate.z + lowBoundaryOffset) * width * height;
             if (id < length)
                 blocks[id] = value;
         }
@@ -367,8 +429,7 @@ public struct MarchTablesBurst
         if (cornerIndexBFromEdge.IsCreated)
             cornerIndexBFromEdge.Dispose();
     }
-}
-
+} 
 
 struct MarchTables { 
     public static byte[,] triangulation = {
@@ -525,7 +586,7 @@ struct MarchTables {
         { 4, 11, 8, 4, 6, 11, 0, 2, 9, 2, 10, 9, 255, 255, 255, 255 },
         { 10, 9, 3, 10, 3, 2, 9, 4, 3, 11, 3, 6, 4, 6, 3, 255 },
         { 8, 2, 3, 8, 4, 2, 4, 6, 2, 255, 255, 255, 255, 255, 255, 255 },
-        { 0, 4, 2, 4, 6, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
+        { 0, 4, 2, 2, 4, 6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
         { 1, 9, 0, 2, 3, 4, 2, 4, 6, 4, 3, 8, 255, 255, 255, 255 },
         { 1, 9, 4, 1, 4, 2, 2, 4, 6, 255, 255, 255, 255, 255, 255, 255 },
         { 8, 1, 3, 8, 6, 1, 8, 4, 6, 6, 10, 1, 255, 255, 255, 255 },
@@ -576,7 +637,7 @@ struct MarchTables {
         { 8, 2, 0, 8, 5, 2, 8, 7, 5, 10, 2, 5, 255, 255, 255, 255 },
         { 9, 0, 1, 5, 10, 3, 5, 3, 7, 3, 10, 2, 255, 255, 255, 255 },
         { 9, 8, 2, 9, 2, 1, 8, 7, 2, 10, 2, 5, 7, 5, 2, 255 },
-        { 1, 3, 5, 3, 7, 5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
+        { 1, 3, 5, 5, 3, 7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
         { 0, 8, 7, 0, 7, 1, 1, 7, 5, 255, 255, 255, 255, 255, 255, 255 },
         { 9, 0, 3, 9, 3, 5, 5, 3, 7, 255, 255, 255, 255, 255, 255, 255 },
         { 9, 8, 7, 5, 9, 7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
@@ -612,7 +673,7 @@ struct MarchTables {
         { 4, 9, 1, 4, 1, 7, 0, 8, 1, 8, 7, 1, 255, 255, 255, 255 },
         { 4, 0, 3, 7, 4, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
         { 4, 8, 7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
-        { 9, 10, 8, 10, 11, 8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
+        { 9, 10, 8, 8, 10, 11, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },
         { 3, 0, 9, 3, 9, 11, 11, 9, 10, 255, 255, 255, 255, 255, 255, 255 },
         { 0, 1, 10, 0, 10, 8, 8, 10, 11, 255, 255, 255, 255, 255, 255, 255 },
         { 3, 1, 10, 11, 3, 10, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 },

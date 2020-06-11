@@ -146,9 +146,9 @@ public class CpuMeshGenerator : IMeshGenerator
                     terrain.existingChunks.TryGetValue(new Vector3Int(coord.x + x - 1, coord.y + y - 1, coord.z + z - 1), out chunks[i++]);
 
         i = 0;
-        for (int z = -1; z < Chunk.size.width + 2; z++)
-            for (int y = -1; y < Chunk.size.height + 2; y++)
-                for (int x = -1; x < Chunk.size.width + 2; x++)
+        for (int z = -ChunkMeshBlocks.lowBoundaryOffset; z < Chunk.size.width + ChunkMeshBlocks.highBoundaryOffset; z++)
+            for (int y = -ChunkMeshBlocks.lowBoundaryOffset; y < Chunk.size.height + ChunkMeshBlocks.highBoundaryOffset; y++)
+                for (int x = -ChunkMeshBlocks.lowBoundaryOffset; x < Chunk.size.width + ChunkMeshBlocks.highBoundaryOffset; x++)
                 {
                     int chunkIndex = (x + Chunk.size.width) / Chunk.size.width + ((y + Chunk.size.height) / Chunk.size.height) * 3 + ((z + Chunk.size.width) / Chunk.size.width) * 9;
 

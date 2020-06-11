@@ -14,7 +14,9 @@ public class Player : MonoBehaviour
         controller = GetComponent<CreatureController>();
 
         if (playerCamera == null)
-            playerCamera = Camera.main;  
+            playerCamera = Camera.main;
+
+        //transform.position = new Vector3(64, 40, -20);  
         
         playerCamera.transform.SetParent(transform);
         playerCamera.transform.position = transform.position;        

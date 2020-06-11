@@ -71,13 +71,43 @@ public class ProTerra : MonoBehaviour
 
     /* Interface */
 
-    // Tries to modyfy block. If successfull, requests mesh and returns true
-    public bool ModifyBlock (Vector3Int chunkCoord, Vector3Int localPosition, int value)
+    public byte BlockValue (Vector3Int blockPosition)
+    {
+        Chunk chunk;
+        Vector3Int localBlockPosition = WorldPositionToChunkPosition(blockPosition);
+        Vector3Int chunkCoord = WorldPositionToChunkCoord(blockPosition);
+
+        if (existingChunks.TryGetValue(chunkCoord, out chunk))
+        {
+            return chunk.blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
+        }
+
+        return 0;
+    }
+
+    public byte BlockValue (Vector3Int localBlockPosition, Chunk chunk)
+    {
+        return chunk.blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
+    }
+
+    public byte BlockValue (Vector3Int localBlockPosition, Vector3Int chunkCoord)
     {
         Chunk chunk;
         if (existingChunks.TryGetValue(chunkCoord, out chunk))
         {
-            if (chunk.ModifyBlock(localPosition, value))
+            return chunk.blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
+        }
+
+        return 0;
+    }
+
+    // Tries to modyfy block. If successfull, requests mesh and returns true
+    public bool ModifyBlock (Vector3Int chunkCoord, Vector3Int localBlockPosition, int value)
+    {
+        Chunk chunk;
+        if (existingChunks.TryGetValue(chunkCoord, out chunk))
+        {
+            if (chunk.ModifyBlock(localBlockPosition, value))
             {
                 MarkForMeshGeneration(chunk);
 
@@ -87,7 +117,7 @@ public class ProTerra : MonoBehaviour
                     int y = (i & 2) >> 1;
                     int z = (i & 4) >> 2;
 
-                    if ((localPosition.x * x == 0) && (localPosition.y * y == 0) && (localPosition.z * z == 0) && existingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
+                    if ((localBlockPosition.x * x == 0) && (localBlockPosition.y * y == 0) && (localBlockPosition.z * z == 0) && existingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
                         MarkForMeshGeneration(chunk);
                 }
                 return true;  
@@ -97,8 +127,36 @@ public class ProTerra : MonoBehaviour
         return false;
     }
 
+    public bool ModifyBlock(Vector3Int blockPosition, int value)
+    {
+        Chunk chunk;
+        Vector3Int chunkCoord = WorldPositionToChunkCoord(blockPosition);
+        Vector3Int localBlockPosition = WorldPositionToChunkPosition(blockPosition);
 
-   
+        if (existingChunks.TryGetValue(chunkCoord, out chunk))
+        {
+            if (chunk.ModifyBlock(localBlockPosition, value))
+            {
+                MarkForMeshGeneration(chunk);
+
+                for (int i = 1; i < 8; i++)
+                {
+                    int x = i & 1;
+                    int y = (i & 2) >> 1;
+                    int z = (i & 4) >> 2;
+
+                    if ((localBlockPosition.x * x == 0) && (localBlockPosition.y * y == 0) && (localBlockPosition.z * z == 0) && existingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
+                        MarkForMeshGeneration(chunk);
+                }
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+
     /* Static methods */
 
     public static Vector3Int WorldPositionToChunkCoord(Vector3Int position)
@@ -366,31 +424,32 @@ public class ProTerra : MonoBehaviour
     void CreateChunks ()
     {
         Chunk chunk;
-        Vector3Int coord; 
-
-        coord = new Vector3Int(0, 0, 0);
+        Vector3Int coord;
+        Vector3Int viewerCoord = WorldPositionToChunkCoord(viewer.position);
+        viewerCoord.y = 0; 
+        
         chunk = CreateChunk();
         chunksForRecycling.Enqueue(chunk);
-        blocksGenerator.RequestData(coord);
+        blocksGenerator.RequestData(viewerCoord);
         for (int i = 1; i <= viewDistance; i++)
             for (int x = 0; x < 2*i; x++)
             {
-                coord = new Vector3Int(i, 0, i - x);
+                coord = new Vector3Int(i, 0, i - x) + viewerCoord;
                 chunk = CreateChunk();
                 chunksForRecycling.Enqueue(chunk);
                 blocksGenerator.RequestData(coord);
 
-                coord = new Vector3Int(i - x, 0, -i);
+                coord = new Vector3Int(i - x, 0, -i) + viewerCoord;
                 chunk = CreateChunk();
                 chunksForRecycling.Enqueue(chunk);
                 blocksGenerator.RequestData(coord);
 
-                coord = new Vector3Int(-i, 0, x - i);
+                coord = new Vector3Int(-i, 0, x - i) + viewerCoord;
                 chunk = CreateChunk();
                 chunksForRecycling.Enqueue(chunk);
                 blocksGenerator.RequestData(coord);
 
-                coord = new Vector3Int(x - i, 0, i);
+                coord = new Vector3Int(x - i, 0, i) + viewerCoord;
                 chunk = CreateChunk();
                 chunksForRecycling.Enqueue(chunk);
                 blocksGenerator.RequestData(coord);

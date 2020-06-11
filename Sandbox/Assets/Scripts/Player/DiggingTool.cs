@@ -2,7 +2,14 @@
 
 public class DiggingTool : MonoBehaviour
 {
-    public float maxDistance = 10;
+    [SerializeField]
+    float maxDistance = 10;
+    [SerializeField]
+    int value = -10;
+
+    [SerializeField]
+    bool highlightGizmo = false;
+
 
     private CreatureController controller;
     private ICreatureInput input;
@@ -42,10 +49,8 @@ public class DiggingTool : MonoBehaviour
             if (Physics.Raycast(ray, out hitInfo, maxDistance: maxDistance))
             {
                 if (hitInfo.transform.tag == "Chunk")
-                {
-                    int value = -1;
-                    //GameEvents.Events.ModifyClosestBlock(hitInfo.point, value);
-                    GameEvents.Events.ModifyBlockOnHit(hitInfo, value);
+                {    
+                    GameEvents.Events.ModifyClosestExposedBlock(hitInfo, value);
 
                     rayGizmoStart = controller.position;
                     rayGizmoEnd = hitInfo.point;
@@ -57,13 +62,12 @@ public class DiggingTool : MonoBehaviour
 
     private void OnDrawGizmos()
     {           
-        if (Application.isPlaying && drawGizmo)
+        if (Application.isPlaying && (drawGizmo || highlightGizmo))
         {
             Gizmos.color = Color.green;
             Gizmos.DrawLine(rayGizmoStart, rayGizmoEnd);
 
-            Vector3Int intPosition = new Vector3Int((int)rayGizmoEnd.x, (int)rayGizmoEnd.y, (int)rayGizmoEnd.z);
-            Vector3Int lastCorner = intPosition;
+            Vector3Int intPosition = new Vector3Int(Mathf.FloorToInt(rayGizmoEnd.x), Mathf.FloorToInt(rayGizmoEnd.y), Mathf.FloorToInt(rayGizmoEnd.z));             
 
             Gizmos.color = Color.blue;
             Gizmos.DrawWireCube(new Vector3(intPosition.x + .5f, intPosition.y + .5f, intPosition.z + .5f), Vector3.one);
