@@ -4,32 +4,35 @@
 public class Player : MonoBehaviour
 {
     [SerializeField]
-    bool showPosition = false;
-    public Camera playerCamera; 
+    bool _showPosition_ = false;
+    public Camera PlayerCamera; 
 
-    CreatureController controller;
+    CreatureController _controller;
 
     private void Awake()
     {
-        controller = GetComponent<CreatureController>();
+        _controller = GetComponent<CreatureController>();
 
-        if (playerCamera == null)
-            playerCamera = Camera.main;
+        if (PlayerCamera == null)
+            PlayerCamera = Camera.main;
 
-        //transform.position = new Vector3(64, 40, -20);  
-        
-        playerCamera.transform.SetParent(transform);
-        playerCamera.transform.position = transform.position;        
-    } 
+        PlayerCamera.transform.SetParent(transform);
+        PlayerCamera.transform.position = transform.position;        
+    }
+
+    private void Start()
+    {
+        _controller.SetPosition(new Vector3(64, 200, -20));
+    }
 
     private void Update()
     {            
-        playerCamera.transform.LookAt(playerCamera.transform.position + controller.lookDirection);
+        PlayerCamera.transform.LookAt(PlayerCamera.transform.position + _controller.LookDirection);
     }
 
     private void OnDrawGizmos()
     {
-        if (showPosition)
+        if (_showPosition_)
         {
             float minX = Mathf.Floor(transform.position.x);
             float minZ = Mathf.Floor(transform.position.z);

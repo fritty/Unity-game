@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 21118cb03bae2d449a51066c41877833, type: 3}
+  m_Name: Terrain Settins
+  m_EditorClassIdentifier: 
+  worldHeight: 8
+  generationDistance: 8
+  viewDistance: 8
+  MapGeneratorSettings: {fileID: 11400000, guid: 2ddf6db58dde4ad4f95539417876979d,
+    type: 2}
+  MeshGeneratorSettings: {fileID: 11400000, guid: abbb412578e195343a2227df1beedb2c,
+    type: 2}
+  mapGeneratorSettingsFoldout: 1
+  meshGeneratorSettingsFoldout: 0

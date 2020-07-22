@@ -1,237 +1,317 @@
-﻿using System.Collections.Generic;
+﻿using System.Collections.Generic;                                                                                                                                                  
 using UnityEngine;
 using System;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 
-public class CpuMeshGenerator : IMeshGenerator
+namespace Sandbox.ProceduralTerrain.Core
 {
-    MeshGeneratorSettings Settings;
-
-    Queue<Vector3Int> requestedCoords = new Queue<Vector3Int>();
-    Action<GeneratedDataInfo<MeshData>> dataCallback;
-    ProTerra terrain;
-
-    static int maxJobsPerUpdate = 4;
-
-    ChunkMeshBlocks[] blocksForMesh;  // blocks data for generating mesh
-    ChunkMeshVerticies[] verticesExpanded;
-    NativeQueue<float3>[] verticies;
-    NativeQueue<int>[] indicies;
-    MarchTablesBurst marchTables;
-        
-    Queue<int> availableJobIndicies;
-    Dictionary<int, JobHandle> jobsAtWork;
-    Vector3Int[] jobsAssignedCoords;
-
-
-    public CpuMeshGenerator(Action<GeneratedDataInfo<MeshData>> dataCallback, ProTerra terrain, MeshGeneratorSettings meshGeneratorSettings)
+    public class CpuMeshGenerator
     {
-        this.dataCallback = dataCallback;
-        this.terrain = terrain;
-        Settings = meshGeneratorSettings;
-        Initialize();
-    }
+        const int _maxColumnsPerUpdate = 2;
+        const int _maxChunksPerUpdate = 2;
 
-    public void Destroy()
-    {
-        ReleaseBuffers();
-    } 
+        readonly TerrainSettings _settings;
 
-    public void RequestData(Vector3Int coord)
-    {
-        requestedCoords.Enqueue(coord);
-    }
+        MarchTablesBurst _marchTables;
+        Action<GeneratedDataInfo<MeshData[]>> _columnDataCallback;
+        Action<GeneratedDataInfo<MeshData>> _chunkDataCallback;
+        Queue<Vector2Int> _requestedColumns;
+        Queue<Vector3Int> _requestedChunks;
+        ColumnMarchData[] _columnData;
+        ChunkMarchData[] _chunkData;
+        JobsData _columnJobs;
+        JobsData _chunkJobs;
 
-    public void ManageRequests()
-    {
-        //Return requested data       
-        if (jobsAtWork.Count > 0)
-            for (int jobIndex = 0; jobIndex < maxJobsPerUpdate; jobIndex++)
-            {
-                JobHandle jobHandle;
-                if (jobsAtWork.TryGetValue(jobIndex, out jobHandle))
+        public CpuMeshGenerator(Action<GeneratedDataInfo<MeshData[]>> columnDataCallback, Action<GeneratedDataInfo<MeshData>> chunkDataCallback, TerrainSettings Settings)
+        {
+            this._columnDataCallback = columnDataCallback;
+            this._chunkDataCallback = chunkDataCallback;
+            this._settings = Settings;
+            Initialize();
+        }
+
+        public void Destroy()
+        {
+            ReleaseBuffers();
+        }
+
+        public void RequestChunkData(Vector3Int coord)
+        {
+            _requestedChunks.Enqueue(coord);
+        }
+
+        public void RequestColumnData(Vector2Int coord)
+        {
+            _requestedColumns.Enqueue(coord);
+        }
+
+        public Queue<Vector2Int> GetColumnRequests()
+        {
+            return _requestedColumns;
+        }
+
+        public void ClearColumnRequests()
+        {
+            _requestedColumns.Clear();
+        }
+
+        public void ReplaceColumnRequests(List<Vector2Int> forGeneration)
+        {
+            _requestedColumns.Clear();
+            for (int i = 0; i < forGeneration.Count; i++)
+                _requestedColumns.Enqueue(forGeneration[i]);
+        }
+
+        public void ManageColumnRequests()
+        {
+            // Return requested columns data       
+            if (_columnJobs.jobsAtWork.Count > 0)
+                for (int jobIndex = 0; jobIndex < _maxColumnsPerUpdate; jobIndex++)
                 {
-                    if (jobHandle.IsCompleted)
+                    JobHandle jobHandle;
+                    if (_columnJobs.jobsAtWork.TryGetValue(jobIndex, out jobHandle))
                     {
-                        Vector3Int coord = jobsAssignedCoords[jobIndex];
-                        jobHandle.Complete();
-                        dataCallback(new GeneratedDataInfo<MeshData>(CopyCpuMeshData(jobIndex), coord));
+                        if (jobHandle.IsCompleted)
+                        {
+                            Vector3Int coord = _columnJobs.jobCoords[jobIndex];
+                            jobHandle.Complete();
+                            _columnDataCallback(new GeneratedDataInfo<MeshData[]>(CopyColumnMeshData(jobIndex), coord));
 
-                        jobsAtWork.Remove(jobIndex);
-                        availableJobIndicies.Enqueue(jobIndex);
+                            _columnJobs.jobsAtWork.Remove(jobIndex);
+                            _columnJobs.availableJobIndicies.Enqueue(jobIndex);
+                        }
                     }
                 }
-            }
 
-        // Go through requested coordinates and start generation threads if still relevant
-        if (requestedCoords.Count > 0)
-        {
-            Vector3Int viewerCoord = new Vector3Int(Mathf.FloorToInt(terrain.viewer.position.x / Chunk.size.width), 0, Mathf.FloorToInt(terrain.viewer.position.z / Chunk.size.width));
-
-            int maxJobs = Mathf.Min(maxJobsPerUpdate, availableJobIndicies.Count);
-            for (int i = 0; i < maxJobs && requestedCoords.Count > 0; i++)
+            // Go through requested coordinates and start generation threads
+            if (_requestedColumns.Count > 0)
             {
-                Vector3Int coord = requestedCoords.Dequeue();
-
-                // skip outdated coordinates
-                while ((Mathf.Abs(coord.x - viewerCoord.x) > terrain.viewDistance || Mathf.Abs(coord.z - viewerCoord.z) > terrain.viewDistance) && requestedCoords.Count > 0)
+                int maxJobs = Mathf.Min(_columnJobs.availableJobIndicies.Count, Mathf.Min(_maxColumnsPerUpdate, _requestedColumns.Count));
+                for (int i = 0; i < maxJobs; i++)
                 {
-                    coord = requestedCoords.Dequeue();
+                    int jobIndex = _columnJobs.availableJobIndicies.Dequeue();
+                    Vector2Int coord = _requestedColumns.Dequeue();
+                    FillColumnData(coord, jobIndex);
+
+                    _columnJobs.jobsAtWork.Add(jobIndex, ScheduleColumnJob(_columnData[jobIndex]));
+                    _columnJobs.jobCoords[jobIndex] = new Vector3Int(coord.x, -1, coord.y);
                 }
+            }
+        }
 
-                // check last coordinate
-                if (Mathf.Abs(coord.x - viewerCoord.x) <= terrain.viewDistance && Mathf.Abs(coord.z - viewerCoord.z) <= terrain.viewDistance)
+        public void ManageChunkRequests()
+        {
+            // Return requested chunks data
+            if (_chunkJobs.jobsAtWork.Count > 0)
+                for (int jobIndex = 0; jobIndex < _maxChunksPerUpdate; jobIndex++)
                 {
-                    // check for adjacent chunks
-                    bool generate = true;
-                    int y = 0;
-                    for (int x = -1; x <= 1; x++)
-                        //for (int y = -1; y <= 1; y++)
-                        for (int z = -1; z <= 1; z++)
-                            if (!terrain.existingChunks.ContainsKey(new Vector3Int(coord.x + x, coord.y + y, coord.z + z)))
-                                generate = false;
-
-                    // start generation
-                    if (generate)
+                    JobHandle jobHandle;
+                    if (_chunkJobs.jobsAtWork.TryGetValue(jobIndex, out jobHandle))
                     {
-                        int jobIndex = availableJobIndicies.Dequeue();
+                        if (jobHandle.IsCompleted)
+                        {
+                            Vector3Int coord = _chunkJobs.jobCoords[jobIndex];
+                            jobHandle.Complete();
+                            _chunkDataCallback(new GeneratedDataInfo<MeshData>(CopyChunkMeshData(_chunkData[jobIndex]), coord));
 
-                        FillBlocksArray(coord, jobIndex);
-
-                        jobsAtWork.Add(jobIndex, ScheduleJob(jobIndex));
-                        jobsAssignedCoords[jobIndex] = coord;
+                            _chunkJobs.jobsAtWork.Remove(jobIndex);
+                            _chunkJobs.availableJobIndicies.Enqueue(jobIndex);
+                        }
                     }
                 }
-            }
-        }
-    }
 
-
-    //////////////////////////////////////////
-
-    MeshData CopyCpuMeshData(int jobIndex)
-    {
-        MeshData meshData;
-        if (verticies[jobIndex].Count > 0)
-        {
-            meshData = new MeshData();
-
-            meshData.vertices = new Vector3[verticies[jobIndex].Count];
-            verticies[jobIndex].ToArray(Allocator.Temp).Reinterpret<Vector3>().CopyTo(meshData.vertices);
-
-            meshData.triangles = new int[indicies[jobIndex].Count];
-            indicies[jobIndex].ToArray(Allocator.Temp).CopyTo(meshData.triangles);
-
-            verticies[jobIndex].Clear();
-            indicies[jobIndex].Clear();
-        }
-        else
-        {
-            meshData = new MeshData(0);
-        }
-
-        return meshData;
-    }
-
-    void FillBlocksArray(Vector3Int coord, int jobIndex)
-    {
-        Chunk[] chunks = new Chunk[27];
-
-        int i = 0;
-        for (int z = 0; z < 3; z++)
-            for (int y = 0; y < 3; y++)
-                for (int x = 0; x < 3; x++)
-                    terrain.existingChunks.TryGetValue(new Vector3Int(coord.x + x - 1, coord.y + y - 1, coord.z + z - 1), out chunks[i++]);
-
-        i = 0;
-        for (int z = -ChunkMeshBlocks.lowBoundaryOffset; z < Chunk.size.width + ChunkMeshBlocks.highBoundaryOffset; z++)
-            for (int y = -ChunkMeshBlocks.lowBoundaryOffset; y < Chunk.size.height + ChunkMeshBlocks.highBoundaryOffset; y++)
-                for (int x = -ChunkMeshBlocks.lowBoundaryOffset; x < Chunk.size.width + ChunkMeshBlocks.highBoundaryOffset; x++)
+            // Go through requested coordinates and start generation threads
+            if (_requestedChunks.Count > 0)
+            {
+                int maxJobs = Mathf.Min(_chunkJobs.availableJobIndicies.Count, Mathf.Min(_maxChunksPerUpdate, _requestedChunks.Count));
+                for (int i = 0; i < maxJobs; i++)
                 {
-                    int chunkIndex = (x + Chunk.size.width) / Chunk.size.width + ((y + Chunk.size.height) / Chunk.size.height) * 3 + ((z + Chunk.size.width) / Chunk.size.width) * 9;
+                    int jobIndex = _chunkJobs.availableJobIndicies.Dequeue();
+                    Vector3Int coord = _requestedChunks.Dequeue();
+                    FillChunkData(coord, jobIndex);
 
-                    if (chunks[chunkIndex] != null)
-                        blocksForMesh[jobIndex][i++] = chunks[chunkIndex].blocks[(z + Chunk.size.width) % Chunk.size.width, (y + Chunk.size.height) % Chunk.size.height, (x + Chunk.size.width) % Chunk.size.width];
-                    else
-                        blocksForMesh[jobIndex][i++] = 0;
+                    _chunkJobs.jobsAtWork.Add(jobIndex, ScheduleChunkJob(_chunkData[jobIndex]));
+                    _chunkJobs.jobCoords[jobIndex] = coord;
                 }
-    }
-
-    JobHandle ScheduleJob(int jobIndex)
-    {
-        FillVerticiesArrayJob fillJob = new FillVerticiesArrayJob
-        {
-            blocks = blocksForMesh[jobIndex],
-            verticesExpanded = this.verticesExpanded[jobIndex],
-        };
-        JobHandle fillJobHandle = fillJob.Schedule(verticesExpanded[jobIndex].length, 32);
-
-        CollapseIndiciesJob collapseJob = new CollapseIndiciesJob
-        {
-            blocks = blocksForMesh[jobIndex],
-            verticiesExpanded = this.verticesExpanded[jobIndex],
-            verticies = this.verticies[jobIndex],
-            indicies = this.indicies[jobIndex],
-            marchTables = this.marchTables,
-        };
-
-        return collapseJob.Schedule(fillJobHandle);
-    }
-
-    
-    ////////////////////////////////////////// 
-
-    void Initialize()
-    {
-        availableJobIndicies = new Queue<int>();
-        jobsAtWork = new Dictionary<int, JobHandle>();
-        jobsAssignedCoords = new Vector3Int[maxJobsPerUpdate];
-
-        blocksForMesh = new ChunkMeshBlocks[maxJobsPerUpdate];
-        verticesExpanded = new ChunkMeshVerticies[maxJobsPerUpdate];
-        verticies = new NativeQueue<float3>[maxJobsPerUpdate];
-        indicies = new NativeQueue<int>[maxJobsPerUpdate];
-        marchTables = new MarchTablesBurst(1);
-
-        for (int jobIndex = 0; jobIndex < maxJobsPerUpdate; jobIndex++)
-        {
-            availableJobIndicies.Enqueue(jobIndex);
-
-            if (!blocksForMesh[jobIndex].blocks.IsCreated)
-            {
-                blocksForMesh[jobIndex] = new ChunkMeshBlocks(Chunk.size.width, Chunk.size.height);
             }
-            if (!verticesExpanded[jobIndex].verticies.IsCreated)
-            {
-                verticesExpanded[jobIndex] = new ChunkMeshVerticies(Chunk.size.width, Chunk.size.height);
-            }
-            if (!verticies[jobIndex].IsCreated)
-                verticies[jobIndex] = new NativeQueue<float3>(Allocator.Persistent);
-            if (!indicies[jobIndex].IsCreated)
-                indicies[jobIndex] = new NativeQueue<int>(Allocator.Persistent);
-        }
-    }
-
-    void ReleaseBuffers()
-    {   
-        for (int jobIndex = 0; jobIndex < maxJobsPerUpdate; jobIndex++)
-        {
-            JobHandle job;
-            if (jobsAtWork.TryGetValue(jobIndex, out job))
-                job.Complete();
-
-            if (blocksForMesh[jobIndex].blocks.IsCreated)
-                blocksForMesh[jobIndex].blocks.Dispose();
-            if (verticesExpanded[jobIndex].verticies.IsCreated)
-                verticesExpanded[jobIndex].verticies.Dispose();
-            if (verticies[jobIndex].IsCreated)
-                verticies[jobIndex].Dispose();
-            if (indicies[jobIndex].IsCreated)
-                indicies[jobIndex].Dispose();
         }
 
-        marchTables.Dispose();
+        //////////////////////////////////////////
+
+        private MeshData[] CopyColumnMeshData(int jobIndex)
+        {
+            MeshData[] meshData = new MeshData[_settings.WorldHeight];
+            for (int i = 0; i < _settings.WorldHeight; i++)
+                meshData[i] = CopyChunkMeshData(_columnData[jobIndex].ChunksData[i]);
+
+            return meshData;
+        }
+
+        private MeshData CopyChunkMeshData(ChunkMarchData chunkData)
+        {
+            MeshData meshData;
+            if (chunkData.Verticies.Count > 0)
+            {
+                meshData = new MeshData();
+
+                meshData.Vertices = new Vector3[chunkData.Verticies.Count];
+                NativeArray<float3> tmpVertices = chunkData.Verticies.ToArray(Allocator.Temp);
+                tmpVertices.Reinterpret<Vector3>().CopyTo(meshData.Vertices);
+                tmpVertices.Dispose();
+
+                meshData.Triangles = new int[chunkData.Indicies.Count];
+                NativeArray<int> tmpIndicies = chunkData.Indicies.ToArray(Allocator.Temp);
+                tmpIndicies.CopyTo(meshData.Triangles);
+                tmpIndicies.Dispose();
+            }
+            else
+            {
+                meshData = new MeshData(0);
+            }
+
+            chunkData.Clear();
+
+            return meshData;
+        }
+
+        private void FillChunkData(Vector3Int coord, int jobIndex)
+        {
+            byte[,,][] surroundingBlocks = new byte[3, 3, 3][];
+            Vector3Int chunkCoord = new Vector3Int();
+
+            for (chunkCoord.x = 0; chunkCoord.x < 3; chunkCoord.x++)
+                for (chunkCoord.y = 0; chunkCoord.y < 3; chunkCoord.y++)
+                    for (chunkCoord.z = 0; chunkCoord.z < 3; chunkCoord.z++)
+                    {
+                        ProTerra.Instance.GetBlockValueArray(out surroundingBlocks[chunkCoord.z, chunkCoord.y, chunkCoord.x], chunkCoord + coord - Vector3Int.one);
+                    }
+            _chunkData[jobIndex].Blocks.SetBlocks(surroundingBlocks);
+        }
+
+        private void FillColumnData(Vector2Int coord, int jobIndex)
+        {
+            Vector3Int relativeCoord = new Vector3Int();
+
+            for (relativeCoord.z = 0; relativeCoord.z < 3; relativeCoord.z++)
+                for (relativeCoord.y = 0; relativeCoord.y < _settings.WorldHeight; relativeCoord.y++)
+                    for (relativeCoord.x = 0; relativeCoord.x < 3; relativeCoord.x++)
+                    {
+                        var reference = ProTerra.Instance.GetBlockArrayReference(new Vector3Int(coord.x - 1, 0, coord.y - 1) + relativeCoord);
+                        if (reference.Length == 0) 
+                            reference.Dispose();
+                        else 
+                            _columnData[jobIndex].AssignReference(reference, relativeCoord);
+                    }
+            _columnData[jobIndex].SetReferences();
+        }
+
+        JobHandle ScheduleChunkJob(ChunkMarchData chunkData)
+        {
+            FillVerticiesArrayJob fillJob = new FillVerticiesArrayJob
+            {
+                blocks = chunkData.Blocks,
+                verticesExpanded = chunkData.VerticesExpanded,
+            };
+            JobHandle fillJobHandle = fillJob.Schedule(ChunkMarchVerticies.Length, 32);
+
+            CollapseIndiciesJob collapseJob = new CollapseIndiciesJob
+            {
+                blocks = chunkData.Blocks,
+                verticiesExpanded = chunkData.VerticesExpanded,
+                verticies = chunkData.Verticies,
+                indicies = chunkData.Indicies,
+                marchTables = this._marchTables,
+                //mapping = chunkData.mapping,
+            };
+
+            return collapseJob.Schedule(fillJobHandle);
+        }
+
+        JobHandle ScheduleColumnJob(ColumnMarchData columnData)
+        {
+            NativeArray<JobHandle> chunkJobs = new NativeArray<JobHandle>(_settings.WorldHeight, Allocator.Temp);
+            for (int i = 0; i < _settings.WorldHeight; i++)
+            {
+                chunkJobs[i] = ScheduleChunkJob(columnData.ChunksData[i]);
+            }
+
+            JobHandle result = JobHandle.CombineDependencies(chunkJobs);
+            chunkJobs.Dispose();
+            return result;
+        }
+
+
+        ////////////////////////////////////////// 
+
+        void Initialize()
+        {
+            _requestedChunks = new Queue<Vector3Int>();
+            _requestedColumns = new Queue<Vector2Int>();
+
+            _columnJobs.Create(_maxColumnsPerUpdate);
+            _chunkJobs.Create(_maxChunksPerUpdate);
+
+            _marchTables = new MarchTablesBurst();
+            _marchTables.Create();
+
+            _columnData = new ColumnMarchData[_maxColumnsPerUpdate];
+            for (int i = 0; i < _maxColumnsPerUpdate; i++)
+            {
+                _columnData[i].Create(_settings.WorldHeight);
+            }
+
+            _chunkData = new ChunkMarchData[_maxChunksPerUpdate];
+            for (int i = 0; i < _maxChunksPerUpdate; i++)
+            {
+                _chunkData[i].Create(false);
+            }
+        }
+
+        void ReleaseBuffers()
+        {
+            _marchTables.Dispose();
+            _columnJobs.CompleteAll();
+            _chunkJobs.CompleteAll();
+
+            for (int i = 0; i < _maxColumnsPerUpdate; i++)
+            {
+                _columnData[i].Dispose();
+            }
+            for (int i = 0; i < _maxChunksPerUpdate; i++)
+            {
+                _chunkData[i].Dispose();
+            }
+        }
+
+        private struct JobsData
+        {
+            public int maxJobsPerUpdate;
+            public Queue<int> availableJobIndicies;
+            public Dictionary<int, JobHandle> jobsAtWork;
+            public Vector3Int[] jobCoords;
+
+            public void Create(int maxJobsPerUpdate)
+            {
+                this.maxJobsPerUpdate = maxJobsPerUpdate;
+                availableJobIndicies = new Queue<int>();
+                jobsAtWork = new Dictionary<int, JobHandle>();
+                jobCoords = new Vector3Int[maxJobsPerUpdate];
+
+                for (int i = 0; i < maxJobsPerUpdate; i++)
+                    availableJobIndicies.Enqueue(i);
+            }
+
+            public void CompleteAll()
+            {
+                for (int i = 0; i < maxJobsPerUpdate; i++)
+                {
+                    JobHandle job;
+                    if (jobsAtWork.TryGetValue(i, out job))
+                        job.Complete();
+                }
+            }
+        }
     }
 }

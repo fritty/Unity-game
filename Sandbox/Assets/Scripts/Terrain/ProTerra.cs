@@ -1,516 +1,287 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
+using System;
+using Unity.Collections;
+using Sandbox.ProceduralTerrain.Core;
 
-/* Procedural Terrain. Creates and manages chunks */
-[RequireComponent(typeof(DiggingListener))]
-[DisallowMultipleComponent]
-public class ProTerra : MonoBehaviour
-{      
-    public static ProTerra Instance;
-
-    [Header("General Settings")]
-    public int viewDistance = 10;
-    public Transform viewer;
-
-    //static int worldHeight = 1; // not implemented     
-
-    [Header("Gizmos")]
-    [SerializeField]                                              
-    bool showBoundsGizmo = true;
-    [SerializeField]
-    Color chunksGizmoCol = Color.white;
-    [SerializeField]
-    Color generatedChunksGizmoCol = Color.green;
-
-    [Header("Generator settings")]
-    public BlocksGeneratorSettings blocksGeneratorSettings;
-    public MeshGeneratorSettings meshGeneratorSettings;
-
-    [HideInInspector]
-    public bool blocksGeneratorSettingsFoldout;
-    [HideInInspector]
-    public bool meshGeneratorSettingsFoldout;
-
-    // components
-    BlocksGenerator blocksGenerator;
-    IMeshGenerator meshGenerator;
-
-    DiggingListener diggingListener; 
-    //
-    
-    public Vector3Int viewerCoord { get; private set; }
-
-    // structures for managing chunks 
-    public Dictionary<Vector3Int, Chunk> existingChunks { get; private set; }
-    Queue<Chunk> chunksForRecycling;
-    //
-                  
-
-    void Awake()
+namespace Sandbox.ProceduralTerrain
+{
+    /* Main Procedural Terrain script for public methods */
+    [DisallowMultipleComponent]
+    public class ProTerra : ChunksManager
     {
-        Initialize();        
-    }
+        public static ProTerra Instance;
 
-    void Start()
-    {
-        CreateChunks();       
-    }
+        [Header("Gizmos")]
+        [SerializeField]
+        bool showChunksGizmo = false;
+        [SerializeField]
+        Color chunksGizmoCol = new Color(1, 1, 1, .3f);
+        [SerializeField]
+        Color generatedChunksGizmoCol = Color.green;
 
-    void FixedUpdate()
-    {
-        RequestVisibleChunks();
-        blocksGenerator.ManageRequests();
-    }
-
-    void LateUpdate()
-    {
-        meshGenerator.ManageRequests();
-    }
-
-
-    /* Interface */
-
-    public byte BlockValue (Vector3Int blockPosition)
-    {
-        Chunk chunk;
-        Vector3Int localBlockPosition = WorldPositionToChunkPosition(blockPosition);
-        Vector3Int chunkCoord = WorldPositionToChunkCoord(blockPosition);
-
-        if (existingChunks.TryGetValue(chunkCoord, out chunk))
+        protected override void Awake()
         {
-            return chunk.blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
+            CreateSingleton();
+            base.Awake();
+            SetVariables();
         }
 
-        return 0;
-    }
-
-    public byte BlockValue (Vector3Int localBlockPosition, Chunk chunk)
-    {
-        return chunk.blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
-    }
-
-    public byte BlockValue (Vector3Int localBlockPosition, Vector3Int chunkCoord)
-    {
-        Chunk chunk;
-        if (existingChunks.TryGetValue(chunkCoord, out chunk))
+        private void CreateSingleton()
         {
-            return chunk.blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
-        }
-
-        return 0;
-    }
-
-    // Tries to modyfy block. If successfull, requests mesh and returns true
-    public bool ModifyBlock (Vector3Int chunkCoord, Vector3Int localBlockPosition, int value)
-    {
-        Chunk chunk;
-        if (existingChunks.TryGetValue(chunkCoord, out chunk))
-        {
-            if (chunk.ModifyBlock(localBlockPosition, value))
+            if (Instance == null)
             {
-                MarkForMeshGeneration(chunk);
-
-                for (int i = 1; i < 8; i++)
-                {
-                    int x = i & 1;
-                    int y = (i & 2) >> 1;
-                    int z = (i & 4) >> 2;
-
-                    if ((localBlockPosition.x * x == 0) && (localBlockPosition.y * y == 0) && (localBlockPosition.z * z == 0) && existingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
-                        MarkForMeshGeneration(chunk);
-                }
-                return true;  
-            }                 
-        } 
-
-        return false;
-    }
-
-    public bool ModifyBlock(Vector3Int blockPosition, int value)
-    {
-        Chunk chunk;
-        Vector3Int chunkCoord = WorldPositionToChunkCoord(blockPosition);
-        Vector3Int localBlockPosition = WorldPositionToChunkPosition(blockPosition);
-
-        if (existingChunks.TryGetValue(chunkCoord, out chunk))
-        {
-            if (chunk.ModifyBlock(localBlockPosition, value))
-            {
-                MarkForMeshGeneration(chunk);
-
-                for (int i = 1; i < 8; i++)
-                {
-                    int x = i & 1;
-                    int y = (i & 2) >> 1;
-                    int z = (i & 4) >> 2;
-
-                    if ((localBlockPosition.x * x == 0) && (localBlockPosition.y * y == 0) && (localBlockPosition.z * z == 0) && existingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
-                        MarkForMeshGeneration(chunk);
-                }
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-
-
-    /* Static methods */
-
-    public static Vector3Int WorldPositionToChunkCoord(Vector3Int position)
-    {
-        return new Vector3Int(Mathf.FloorToInt((float)position.x / Chunk.size.width), Mathf.FloorToInt((float)position.y / Chunk.size.height), Mathf.FloorToInt((float)position.z / Chunk.size.width));
-    }
-
-    public static Vector3Int WorldPositionToChunkCoord(Vector3 position)
-    {
-        return new Vector3Int(Mathf.FloorToInt(position.x / Chunk.size.width), Mathf.FloorToInt(position.y / Chunk.size.height), Mathf.FloorToInt(position.z / Chunk.size.width));
-    }
-
-    public static Vector3Int WorldPositionToChunkPosition(Vector3Int position)
-    {
-        Vector3Int result = new Vector3Int(position.x % Chunk.size.width, position.y % Chunk.size.height, position.z % Chunk.size.width);
-        if (result.x < 0)
-            result.x += Chunk.size.width;
-        if (result.y < 0)
-            result.y += Chunk.size.height;
-        if (result.z < 0)
-            result.z += Chunk.size.width;
-
-        return result;
-    }
-
-    public static Vector3Int WorldPositionToChunkPosition(Vector3 position)
-    {
-        Vector3Int result = new Vector3Int(Mathf.FloorToInt(position.x) % Chunk.size.width, Mathf.FloorToInt(position.y) % Chunk.size.height, Mathf.FloorToInt(position.z) % Chunk.size.width);
-        if (result.x < 0)
-            result.x += Chunk.size.width;
-        if (result.y < 0)
-            result.y += Chunk.size.height;
-        if (result.z < 0)
-            result.z += Chunk.size.width;
-
-        return result;
-    }
-
-    public static Vector3Int ChunkOriginFromCoord(Vector3Int chunkCoord)
-    {
-        return new Vector3Int(chunkCoord.x * Chunk.size.width, chunkCoord.y * Chunk.size.height, chunkCoord.z * Chunk.size.width);
-    }
-
-    ///////////////////////
-    /* Chunks management */
-    ///////////////////////
-
-    /* Create/destroy chunks based on view distance */
-    void RequestVisibleChunks()
-    {
-        if (existingChunks == null)
-        {
-            return;
-        }
-
-        Vector3Int currentCoord = new Vector3Int(Mathf.FloorToInt(viewer.position.x / Chunk.size.width), 0, Mathf.FloorToInt(viewer.position.z / Chunk.size.width));
-
-        // Go through world bound difference and delete/mark for generation
-        if (viewerCoord != currentCoord) // only if viewer coord is changed
-        { 
-            Vector3Int previousCoord = viewerCoord;
-
-            Vector3Int[] regionX = new Vector3Int[2];
-            Vector3Int[] regionZ = new Vector3Int[2];
-
-            // regions for recalculation
-            regionX[0] = new Vector3Int(currentCoord.x > previousCoord.x ? previousCoord.x - viewDistance
-                                                                         : Mathf.Max(currentCoord.x + viewDistance + 1, previousCoord.x - viewDistance), 0,
-                                        previousCoord.z - viewDistance);
-            regionX[1] = new Vector3Int(currentCoord.x > previousCoord.x ? Mathf.Min(currentCoord.x - viewDistance, previousCoord.x + viewDistance + 1)
-                                                                         : previousCoord.x + viewDistance + 1, 0,
-                                        previousCoord.z + viewDistance + 1); 
-
-            regionZ[0] = new Vector3Int(Mathf.Max(currentCoord.x - viewDistance, previousCoord.x - viewDistance), 0,
-                                        currentCoord.z > previousCoord.z ? previousCoord.z - viewDistance
-                                                                         : Mathf.Max(currentCoord.z + viewDistance + 1, previousCoord.z - viewDistance));
-            regionZ[1] = new Vector3Int(Mathf.Min(currentCoord.x + viewDistance + 1, previousCoord.x + viewDistance + 1), 0,
-                                        currentCoord.z > previousCoord.z ? Mathf.Min(currentCoord.z - viewDistance, previousCoord.z + viewDistance + 1)
-                                                                         : previousCoord.z + viewDistance + 1);
-
-            // loop through old regions and mark them for regeneration as new
-            for (int x = regionX[0].x; x < regionX[1].x; x++)
-            {
-                for (int z = regionX[0].z; z < regionX[1].z; z++)
-                {
-                    Chunk tmpChunk;
-                    Vector3Int key = new Vector3Int(x, 0, z);
-                    if (existingChunks.TryGetValue(key, out tmpChunk))
-                    {
-                        existingChunks.Remove(key);
-                        chunksForRecycling.Enqueue(tmpChunk);
-                    }
-
-                    if (Mathf.Abs(currentCoord.x - previousCoord.x) < 2 * viewDistance + 1)
-                    {
-                        if (currentCoord.x > previousCoord.x)
-                            key = key + new Vector3Int(2 * viewDistance + 1, 0, currentCoord.z - previousCoord.z);
-                        else
-                            key = key + new Vector3Int(-2 * viewDistance - 1, 0, currentCoord.z - previousCoord.z);
-                    }
-                    else
-                    {
-                        key = new Vector3Int(x + currentCoord.x - previousCoord.x, 0, z + currentCoord.z - previousCoord.z);
-                    }
-
-                    blocksGenerator.RequestData(key);
-                }
-            }
-            for (int z = regionZ[0].z; z < regionZ[1].z; z++)
-            {
-                for (int x = regionZ[0].x; x < regionZ[1].x; x++)
-                {
-                    Chunk tmpChunk;
-                    Vector3Int key = new Vector3Int(x, 0, z);
-                    if (existingChunks.TryGetValue(key, out tmpChunk))
-                    {
-                        existingChunks.Remove(key);
-                        chunksForRecycling.Enqueue(tmpChunk);
-                    }
-
-                    if (Mathf.Abs(currentCoord.z - previousCoord.z) < 2 * viewDistance + 1)
-                    {
-                        if (currentCoord.z > previousCoord.z)
-                            key = key + new Vector3Int(0, 0, 2 * viewDistance + 1);
-                        else
-                            key = key + new Vector3Int(0, 0, -2 * viewDistance - 1);
-                    }
-                    else
-                    {
-                        key = new Vector3Int(x, 0, z + currentCoord.z - previousCoord.z);
-                    }
-
-                    blocksGenerator.RequestData(key);
-                }
-            }
-
-            viewerCoord = currentCoord;
-        }
-    }
-
-    // Recieves map data from generator, assignes it for recycled chunk and triggers mesh generation
-    void OnMapDataReceived(GeneratedDataInfo<MapData> mapData)
-    {
-        if (Mathf.Abs(mapData.coord.x - viewerCoord.x) <= viewDistance &&
-            Mathf.Abs(mapData.coord.z - viewerCoord.z) <= viewDistance &&
-            !existingChunks.ContainsKey(mapData.coord))
-        {
-            Chunk chunk = chunksForRecycling.Dequeue();
-            chunk.SetBlocks(mapData.data.blocks);
-            chunk.SetCoord(mapData.coord);
-            existingChunks.Add(mapData.coord, chunk);
-
-            TriggerMeshGeneration(mapData.coord);
-        } 
-    }       
-
-    // Recieves mesh from generator and requests another one if chunk is dirty
-    void OnMeshDataReceived(GeneratedDataInfo<MeshData> meshData)
-    {
-        Chunk chunk;
-        if (existingChunks.TryGetValue(meshData.coord, out chunk))
-        {
-            chunk.SetMesh(meshData.data);
-
-            if (chunk.isDirty)
-            {
-                RequestMesh(chunk);
-                chunk.SetDirty(false);
+                Instance = this;
             }
             else
-                chunk.WaitForMesh(false);
-        }    
-    }
-
-    // Requests meshes for all adjacent chunks
-    void TriggerMeshGeneration(Vector3Int coord)
-    {
-        Chunk chunk;
-        int y = 0;
-        for (int x = -1; x <= 1; x++)
-            //for (int y = -1; y <= 1; y++)
-                for (int z = -1; z <= 1; z++)
-                {
-                    if (existingChunks.TryGetValue(new Vector3Int(coord.x + x, coord.y + y, coord.z + z), out chunk))
-                        RequestMesh(chunk);
-                }
-    }
-
-    // Requests mesh or sets chunk dirty if already requested 
-    private void MarkForMeshGeneration(Chunk chunk)
-    {
-        if (chunk.isWaitingMesh)
-            chunk.SetDirty(true);
-        else
-        {
-            chunk.WaitForMesh(true);
-            RequestMesh(chunk);
-        }
-    }
-
-    // Checks if mesh is needed and can be generated before requesting it
-    void RequestMesh(Chunk chunk)
-    {
-        if (chunk.hasMesh && !chunk.isWaitingMesh)
-            return;
-
-        bool generate = true;
-
-        int y = 0;
-        for (int x = -1; x <= 1; x++)
-            //for (int y = -1; y <= 1; y++)
-                for (int z = -1; z <= 1; z++)                 
-                    if (!existingChunks.ContainsKey(new Vector3Int(chunk.coord.x + x, chunk.coord.y + y, chunk.coord.z + z)))
-                        generate = false;                 
-
-        if (generate)
-            meshGenerator.RequestData(chunk.coord);         
-    }
-
-
-    ////////////////////
-    /* Initialization */
-    ////////////////////
-
-    void Initialize()
-    {
-        CreateSingleton();
-        SetVariables();       
-    }
-
-    void CreateSingleton ()
-    {
-        if (Instance == null)
-        {
-            Instance = this;
-        }
-        else
-        {
-            Destroy(gameObject);
-        }
-    }
-
-    void SetVariables()
-    {   
-        viewerCoord = new Vector3Int(0, 0, 0);
-
-        existingChunks = new Dictionary<Vector3Int, Chunk>();
-        chunksForRecycling = new Queue<Chunk>();
-
-        blocksGenerator = new BlocksGenerator(blocksGeneratorSettings, OnMapDataReceived, this);
-        if (meshGeneratorSettings.useGpu)
-            meshGenerator = new GpuMeshGenerator(OnMeshDataReceived, this, meshGeneratorSettings);
-        else
-            meshGenerator = new CpuMeshGenerator(OnMeshDataReceived, this, meshGeneratorSettings);
-
-        diggingListener = GetComponent<DiggingListener>();
-
-        transform.position = Vector3.zero;
-
-        if (viewer == null)
-            viewer = Camera.main.transform;
-    }   
-
-    /* Initial generation */
-    void CreateChunks ()
-    {
-        Chunk chunk;
-        Vector3Int coord;
-        Vector3Int viewerCoord = WorldPositionToChunkCoord(viewer.position);
-        viewerCoord.y = 0; 
-        
-        chunk = CreateChunk();
-        chunksForRecycling.Enqueue(chunk);
-        blocksGenerator.RequestData(viewerCoord);
-        for (int i = 1; i <= viewDistance; i++)
-            for (int x = 0; x < 2*i; x++)
             {
-                coord = new Vector3Int(i, 0, i - x) + viewerCoord;
-                chunk = CreateChunk();
-                chunksForRecycling.Enqueue(chunk);
-                blocksGenerator.RequestData(coord);
-
-                coord = new Vector3Int(i - x, 0, -i) + viewerCoord;
-                chunk = CreateChunk();
-                chunksForRecycling.Enqueue(chunk);
-                blocksGenerator.RequestData(coord);
-
-                coord = new Vector3Int(-i, 0, x - i) + viewerCoord;
-                chunk = CreateChunk();
-                chunksForRecycling.Enqueue(chunk);
-                blocksGenerator.RequestData(coord);
-
-                coord = new Vector3Int(x - i, 0, i) + viewerCoord;
-                chunk = CreateChunk();
-                chunksForRecycling.Enqueue(chunk);
-                blocksGenerator.RequestData(coord);
+                Destroy(gameObject);
             }
-    }
+        }
 
-    Chunk CreateChunk ()
-    {
-        GameObject chunk = new GameObject();
-        chunk.transform.parent = transform;
-        chunk.tag = "Chunk";
-        Chunk newChunk = chunk.AddComponent<Chunk>();
-        newChunk.Create(meshGeneratorSettings.generateColliders, meshGeneratorSettings.material);
-        return newChunk;
-    }    
-
-    void OnDrawGizmos()
-    {
-        if (Application.isPlaying)
+        private void SetVariables()
         {
-            if (showBoundsGizmo)
-            {
-                var chunks = existingChunks.Values;
-                foreach (var chunk in chunks)
-                {
-                    // chunks 
-                    if (chunk.hasMesh)
-                        Gizmos.color = generatedChunksGizmoCol;
-                    else
-                        Gizmos.color = chunksGizmoCol;
-                    Gizmos.DrawWireCube(ChunkOriginFromCoord(chunk.coord) + Vector3.one * (Chunk.size.width) / 2f, Vector3.one * Chunk.size.width); 
-                }
+            transform.position = Vector3.zero;
+        }
 
+        ///////////////
+        /* Interface */
+        ///////////////
+
+        // Returns single block value
+        public byte GetBlockValue(Vector3Int blockPosition)
+        {
+            Vector3Int localBlockPosition = blockPosition.ToChunkPosition();
+            Vector3Int chunkCoord = blockPosition.ToChunkCoord();
+
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+                return chunk.Blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
+
+            return 0;
+        }
+
+        public byte GetBlockValue(Vector3Int localBlockPosition, Vector3Int chunkCoord)
+        {
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+                return chunk.Blocks[localBlockPosition.z, localBlockPosition.y, localBlockPosition.x];
+
+            return 0;
+        }
+
+        // Returns an array of block values
+        public void GetBlockValueArray(out byte[,,] blocksArray, Vector3Int fromPosition, Vector3Int toPosition)
+        {
+            if (fromPosition.x > toPosition.x || fromPosition.y > toPosition.y || fromPosition.z > toPosition.z)
+            {
+                blocksArray = new byte[0, 0, 0];
+                return;
+            }
+
+            blocksArray = new byte[toPosition.z - fromPosition.z + 1, toPosition.y - fromPosition.y + 1, toPosition.x - fromPosition.x + 1];
+            Vector3Int fromCoord = fromPosition.ToChunkCoord();
+            Vector3Int toCoord = toPosition.ToChunkCoord();
+
+            // Go through required chunks and copy data
+            for (int zCoord = fromCoord.z; zCoord <= toCoord.z; zCoord++)
+                for (int yCoord = fromCoord.y; yCoord <= toCoord.y; yCoord++)
+                    for (int xCoord = fromCoord.x; xCoord <= toCoord.x; xCoord++)
+                    {
+                        Vector3Int chunkOrigin = (new Vector3Int(xCoord, yCoord, zCoord)).ToChunkOrigin(); ;
+                        Vector3Int chunkEnd = chunkOrigin + new Vector3Int(ChunkSize.Width - 1, ChunkSize.Height - 1, ChunkSize.Width - 1);
+
+                        Vector3Int from = Vector3Int.Max(fromPosition, chunkOrigin);
+                        Vector3Int to = Vector3Int.Min(toPosition, chunkEnd);
+
+                        Vector3Int startResultIndex = from - fromPosition;
+                        Vector3Int startChunkIndex = from.ToChunkPosition();
+                        Vector3Int maxIndex = to - from;
+
+                        if (ExistingChunks.TryGetValue(new Vector3Int(xCoord, yCoord, zCoord), out Chunk chunk))
+                        {
+                            for (int z = 0; z <= maxIndex.z; z++)
+                                for (int y = 0; y <= maxIndex.y; y++)
+                                    for (int x = 0; x <= maxIndex.x; x++)
+                                    {
+                                        blocksArray[startResultIndex.z + z, startResultIndex.y + y, startResultIndex.x + x] = chunk.Blocks[startChunkIndex.z + z, startChunkIndex.y + y, startChunkIndex.x + x];
+                                    }
+                        }
+                        else
+                        {
+                            for (int z = 0; z <= maxIndex.z; z++)
+                                for (int y = 0; y <= maxIndex.y; y++)
+                                    for (int x = 0; x <= maxIndex.x; x++)
+                                    {
+                                        blocksArray[startResultIndex.z + z, startResultIndex.y + y, startResultIndex.x + x] = 0;
+                                    }
+                        }
+                    }
+        }
+
+        public void GetBlockValueArray(out byte[] blocksArray, Vector3Int fromPosition, Vector3Int toPosition)
+        {
+            if (fromPosition.x > toPosition.x || fromPosition.y > toPosition.y || fromPosition.z > toPosition.z)
+            {
+                blocksArray = new byte[0];
+                return;
+            }
+            Vector3Int resultSize = toPosition - fromPosition + Vector3Int.one;
+            blocksArray = new byte[resultSize.x * resultSize.y * resultSize.z];
+            Vector3Int fromCoord = fromPosition.ToChunkCoord();
+            Vector3Int toCoord = toPosition.ToChunkCoord();
+
+            // Go through required chunks and copy data
+            for (int zCoord = fromCoord.z; zCoord <= toCoord.z; zCoord++)
+                for (int yCoord = fromCoord.y; yCoord <= toCoord.y; yCoord++)
+                    for (int xCoord = fromCoord.x; xCoord <= toCoord.x; xCoord++)
+                    {
+                        Vector3Int chunkOrigin = (new Vector3Int(xCoord, yCoord, zCoord)).ToChunkOrigin();
+                        Vector3Int chunkEnd = chunkOrigin + new Vector3Int(ChunkSize.Width - 1, ChunkSize.Height - 1, ChunkSize.Width - 1);
+
+                        Vector3Int from = Vector3Int.Max(fromPosition, chunkOrigin);
+                        Vector3Int to = Vector3Int.Min(toPosition, chunkEnd);
+
+                        Vector3Int startResultIndex = from - fromPosition;
+                        Vector3Int startChunkIndex = from.ToChunkPosition();
+                        Vector3Int maxIndex = to - from;
+
+                        if (ExistingChunks.TryGetValue(new Vector3Int(xCoord, yCoord, zCoord), out Chunk chunk))
+                        {
+                            for (int z = 0; z <= maxIndex.z; z++)
+                                for (int y = 0; y <= maxIndex.y; y++)
+                                    for (int x = 0; x <= maxIndex.x; x++)
+                                    {
+                                        blocksArray[(startResultIndex.z + z) * resultSize.x * resultSize.y + (startResultIndex.y + y) * resultSize.x + startResultIndex.x + x] = chunk.Blocks[startChunkIndex.z + z, startChunkIndex.y + y, startChunkIndex.x + x];
+                                    }
+                        }
+                        else
+                        {
+                            for (int z = 0; z <= maxIndex.z; z++)
+                                for (int y = 0; y <= maxIndex.y; y++)
+                                    for (int x = 0; x <= maxIndex.x; x++)
+                                    {
+                                        blocksArray[(startResultIndex.z + z) * resultSize.x * resultSize.y + (startResultIndex.y + y) * resultSize.x + startResultIndex.x + x] = 0;
+                                    }
+                        }
+                    }
+        }
+
+        public void GetBlockValueArray(out byte[,,] blocksArray, Vector3Int chunkCoord)
+        {
+            blocksArray = new byte[ChunkSize.Width, ChunkSize.Height, ChunkSize.Width];
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+            {
+                byte[] tmp = new byte[blocksArray.Length];
+                chunk.Blocks.Native.CopyTo(tmp);
+                Buffer.BlockCopy(tmp, 0, blocksArray, 0, blocksArray.Length);
+            }
+        }
+
+        public void GetBlockValueArray(out byte[] blocksArray, Vector3Int chunkCoord)
+        {
+            blocksArray = new byte[ChunkSize.Length];
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+            {
+                chunk.Blocks.Native.CopyTo(blocksArray);
+            }
+        }
+
+        public void GetBlockValueArray(out NativeArray<byte> blocksArray, Vector3Int chunkCoord)
+        {
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+            {
+                blocksArray = new NativeArray<byte>(chunk.Blocks.Native, Allocator.Persistent);
+                return;
+            }
+            blocksArray = new NativeArray<byte>(ChunkSize.Length, Allocator.None);
+        }
+
+        public NativeArray<byte> GetBlockArrayReference(Vector3Int chunkCoord)
+        {
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+            {
+                return chunk.Blocks.Native;
+            }
+            return new NativeArray<byte>(0, Allocator.Persistent);
+        }
+
+        // Tries to modyfy block. If successfull, requests mesh and returns true
+        public bool ModifyBlock(Vector3Int chunkCoord, Vector3Int localBlockPosition, int value)
+        {
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+            {
+                if (chunk.ModifyBlock(localBlockPosition, value))
+                {
+                    MarkForMeshGeneration(chunk);
+
+                    for (int i = 1; i < 8; i++)
+                    {
+                        int x = i & 1;
+                        int y = (i & 2) >> 1;
+                        int z = (i & 4) >> 2;
+
+                        if ((localBlockPosition.x * x == 0) && (localBlockPosition.y * y == 0) && (localBlockPosition.z * z == 0) && ExistingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
+                            MarkForMeshGeneration(chunk);
+                    }
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool ModifyBlock(Vector3Int blockPosition, int value)
+        {
+            Vector3Int chunkCoord = blockPosition.ToChunkCoord();
+            Vector3Int localBlockPosition = blockPosition.ToChunkPosition();
+
+            if (ExistingChunks.TryGetValue(chunkCoord, out Chunk chunk))
+            {
+                if (chunk.ModifyBlock(localBlockPosition, value))
+                {
+                    MarkForMeshGeneration(chunk);
+
+                    for (int i = 1; i < 8; i++)
+                    {
+                        int x = i & 1;
+                        int y = (i & 2) >> 1;
+                        int z = (i & 4) >> 2;
+
+                        if ((localBlockPosition.x * x == 0) && (localBlockPosition.y * y == 0) && (localBlockPosition.z * z == 0) && ExistingChunks.TryGetValue(chunkCoord - new Vector3Int(x, y, z), out chunk))
+                            MarkForMeshGeneration(chunk);
+                    }
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        void OnDrawGizmos()
+        {
+            if (Application.isPlaying)
+            {
+                if (showChunksGizmo)
+                {
+                    Vector3 chunkSize = new Vector3(ChunkSize.Width, ChunkSize.Height * WorldHeight, ChunkSize.Width);
+                    var chunks = ExistingChunks.Values();
+                    foreach (var chunk in chunks)
+                    {
+                        if (chunk.HasMesh)
+                            Gizmos.color = generatedChunksGizmoCol;
+                        else
+                            Gizmos.color = chunksGizmoCol;
+                        Vector2Int origin = chunk.Coord.ToChunkOrigin();
+                        Gizmos.DrawWireCube(origin.X0Y() + chunkSize / 2f, chunkSize);
+                    }
+                }
                 // world bounds 
                 Gizmos.color = Color.green;
-                Vector3 worldOrigin = ChunkOriginFromCoord(viewerCoord - new Vector3Int(viewDistance, -1, viewDistance));
-                Vector3 worldSize = new Vector3(Chunk.size.width * (2 * viewDistance + 1), 0, Chunk.size.width * (2 * viewDistance + 1));
-                Gizmos.DrawLine(worldOrigin, worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0));
-                Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(worldSize.x, 0, 0), worldOrigin + worldSize);
-                Gizmos.DrawLine(worldOrigin + worldSize, worldOrigin + worldSize - new Vector3(0, 0, worldSize.z));
-                Gizmos.DrawLine(worldOrigin + worldSize - new Vector3(0, 0, worldSize.z), worldOrigin);
+                Vector3 worldOrigin = (ViewerCoord - Vector2Int.one * GenerationDistance).ToChunkOrigin().X0Y();
+                Vector3 worldSize = new Vector3(ChunkSize.Width * (2 * GenerationDistance + 1), 0, ChunkSize.Width * (2 * GenerationDistance + 1));
+                Gizmos.DrawLine(worldOrigin, worldOrigin + worldSize - worldSize.VecX());
+                Gizmos.DrawLine(worldOrigin + worldSize - worldSize.VecX(), worldOrigin + worldSize);
+                Gizmos.DrawLine(worldOrigin + worldSize, worldOrigin + worldSize - worldSize.VecZ());
+                Gizmos.DrawLine(worldOrigin + worldSize - worldSize.VecZ(), worldOrigin);
             }
         }
-    }  
-
-    private void OnDestroy()
-    {
-        meshGenerator.Destroy();
     }
-}
-
-// structure for managing generation
-public struct GeneratedDataInfo<T>
-{
-    public readonly T data;
-    public readonly Vector3Int coord;
-
-    public GeneratedDataInfo(T data, Vector3Int coord)
-    {
-        this.coord = coord;
-        this.data = data;
-    }
-
 }

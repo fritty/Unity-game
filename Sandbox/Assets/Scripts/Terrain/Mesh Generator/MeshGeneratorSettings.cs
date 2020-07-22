@@ -1,20 +1,29 @@
 ﻿using UnityEngine;
 
-[CreateAssetMenu()]
-public class MeshGeneratorSettings : ScriptableObject
+namespace Sandbox.ProceduralTerrain.Core
 {
-    [Header("Mesh properties")]
-    public Material material;
-    public bool generateColliders;
+    [CreateAssetMenu(menuName = "Terrain/MeshGeneratorSettings")]
+    public class MeshGeneratorSettings : ScriptableObject
+    {
+        public Material Material;
+        [ConditionalHide("ColoredMaterial")]
+        public Gradient ColorGradient;
+        public bool GenerateColliders;
 
-    [Header("Gpu generation(outdated)")]
-    public bool useGpu = false;
-    [Tooltip("Shader used for generation")]
-    public ComputeShader marchShader;
+        [HideInInspector]
+        public bool ColoredMaterial = false;
+        [HideInInspector]
+        public bool IsChanged = false;
 
-    [Tooltip("Determines how many operations will be done per frame")]
-    [Range(1, 60)]
-    public int targetFps = 30;    
-    [Tooltip("Log number of chunks generated per frame")]              
-    public bool log = false;
+        private void Awake()
+        {
+            ColoredMaterial = Material.name.Contains("Colored");
+        }
+
+        private void OnValidate()
+        {
+            ColoredMaterial = Material.name.Contains("Colored");
+            IsChanged = true;
+        }
+    }
 }

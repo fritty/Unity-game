@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9d53a4ba03f1ebb4a816fdd1f6f65b9b, type: 3}
+  m_Name: PreviewMeshSettings
+  m_EditorClassIdentifier: 
+  Material: {fileID: 2100000, guid: 13b363d7398821740b24835aa75f65ca, type: 2}
+  ColorGradient:
+    serializedVersion: 2
+    key0: {r: 0, g: 0.11784635, b: 0.8490566, a: 1}
+    key1: {r: 0.8587906, g: 0.9245283, b: 0.11774653, a: 1}
+    key2: {r: 0.9337908, g: 0.990566, b: 0.126157, a: 1}
+    key3: {r: 0.09447021, g: 0.9433962, b: 0, a: 0}
+    key4: {r: 0.10651242, g: 0.6509434, b: 0.003070495, a: 0}
+    key5: {r: 0.4245283, g: 0.28164136, b: 0.09011215, a: 0}
+    key6: {r: 0.4861682, g: 0.3585862, b: 0.18757203, a: 0}
+    key7: {r: 1, g: 1, b: 1, a: 0}
+    ctime0: 0
+    ctime1: 193
+    ctime2: 1928
+    ctime3: 5975
+    ctime4: 17926
+    ctime5: 27371
+    ctime6: 33346
+    ctime7: 40863
+    atime0: 0
+    atime1: 53392
+    atime2: 65535
+    atime3: 0
+    atime4: 0
+    atime5: 0
+    atime6: 0
+    atime7: 0
+    m_Mode: 0
+    m_NumColorKeys: 8
+    m_NumAlphaKeys: 3
+  GenerateColliders: 1
+  ColoredMaterial: 1
+  IsChanged: 0
